@@ -2,8 +2,29 @@
 <html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dheeraj Wholesale</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#f5f6ef;color:#192c23;font:16px system-ui}header{background:#183a2e;color:white;padding:24px clamp(18px,5vw,64px)}header strong{font-size:24px}header small{display:block;color:#c8ded0;margin-top:5px}nav{display:flex;gap:7px;overflow:auto;padding:14px clamp(18px,5vw,64px);background:#fff}button{cursor:pointer;border:0;border-radius:9px;background:#e5eee4;color:#183a2e;padding:11px 15px;font:inherit;font-weight:650;white-space:nowrap}button.active,button.primary{background:#245841;color:white}main{max-width:1160px;margin:auto;padding:24px 18px}h1{margin:0 0 14px;font-size:clamp(26px,5vw,40px)}h2{font-size:20px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:12px}.panel,form{background:white;border:1px solid #e0e5db;border-radius:14px;padding:16px;margin:12px 0}.metric{display:block;font-size:27px;margin-top:7px}.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:12px;margin:10px 0 16px}label{display:grid;gap:5px;font-size:14px;font-weight:600}input,select{width:100%;min-width:0;padding:10px;border:1px solid #aab8ab;border-radius:7px;background:white;font:inherit;color:inherit}.row{display:flex;gap:9px;flex-wrap:wrap;align-items:center}.table{overflow:auto}table{width:100%;border-collapse:collapse;text-align:left}td,th{padding:10px;border-bottom:1px solid #e0e5db;white-space:nowrap}th{background:#eef3eb}#status{min-height:24px;color:#245841;font-weight:600}.muted{color:#53675c}fieldset{border:1px solid #d9e3d8;border-radius:10px;margin:12px 0}button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #b47a26;outline-offset:2px}@media print{header,nav,#status,button{display:none}main{padding:0}body{background:white}}
+
+:root{color-scheme:light;--ink:#172b25;--accent:#176648;--line:#dce6de;--paper:#fff;--wash:#f4f7f3}
+body{background:var(--wash);color:var(--ink);font-family:Inter,system-ui,sans-serif}
+header{background:#112f26;padding:20px clamp(18px,5vw,64px);display:flex;align-items:center;gap:13px}
+.brand-mark{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:#d6f1df;color:#124633;font-weight:800;font-size:14px}
+header strong{font-size:20px;letter-spacing:-.025em}header small{font-size:12px}
+nav{position:sticky;top:0;z-index:2;border-bottom:1px solid var(--line);padding-block:9px}nav:empty{display:none}
+nav button{background:transparent;font-size:14px}nav [data-logout]{margin-left:auto}
+button.primary,button.active{background:var(--accent)}button:hover:not(:disabled){filter:brightness(.95)}button:disabled{opacity:.55;cursor:wait}
+button,input,select{min-height:44px}
+main{padding-top:26px}h1{letter-spacing:-.045em}h2{letter-spacing:-.02em;margin-top:0}
+.panel,form{border-color:var(--line);box-shadow:0 2px 4px #132f2608;padding:20px}
+.grid>.panel{margin:0;padding:18px;font-size:13px;font-weight:650;color:#496358}.metric{color:var(--ink);font-size:clamp(22px,3vw,30px)}
+.quick-actions{margin:18px 0}.quick-actions button:not(:first-child){background:#e5eee4;color:#183a2e}
+#status:empty{display:none}#status:not(:empty){margin-bottom:12px}
+#login{max-width:420px;margin:24px auto;padding:24px}#login label{margin:12px 0}
+.live-total{display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between;background:#eef6ef;padding:13px 15px;border-radius:10px;margin:12px 0;color:#234e3c;font-size:14px}
+.live-total strong{font-variant-numeric:tabular-nums}
+.empty{padding:14px 0;color:#53675c;margin:0}
+@media(max-width:600px){header{padding:14px 16px}main{padding:18px 14px}nav{padding-inline:10px}.grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.grid>.panel{padding:12px}.quick-actions{display:grid;grid-template-columns:1fr 1fr}.fields{grid-template-columns:repeat(2,minmax(0,1fr))}#login{margin-inline:14px}.panel,form{padding:14px}}
+@media print{nav{display:none}.panel{box-shadow:none}}
 </style>
-<header><strong>Dheeraj Wholesale</strong><small>Shared shop workspace</small></header>
+<header><span class="brand-mark" aria-hidden="true">DW</span><div><strong>Dheeraj Wholesale</strong><small>Inventory &amp; accounts</small></div></header>
 <nav aria-label="Main navigation"></nav><main><div id="status" role="status"></div><section id="view"></section></main>
 <form id="login" class="panel" hidden><h2>Owner sign-in</h2><label>Email<input type="email" name="email" required autocomplete="username"></label><label>Password<input type="password" name="password" required autocomplete="current-password"></label><button class="primary">Sign in</button></form><script type="module">
 'use strict';
@@ -116,7 +137,7 @@ function balances(){
  return [...parties.values()];
 }
 function render(){
- document.querySelector('nav').innerHTML=pages.map(p=>'<button type="button" data-page="'+p+'" class="'+(page===p?'active':'')+'">'+p+'</button>').join('');
+ document.querySelector('nav').innerHTML=pages.map(p=>'<button type="button" data-page="'+p+'" class="'+(page===p?'active':'')+'"'+(page===p?' aria-current="page"':'')+'>'+p+'</button>').join('');
  let html='<h1>'+escape(invoice?'Demo invoice':page)+'</h1>';
  document.querySelector('nav').insertAdjacentHTML('beforeend','<button data-logout>Sign out</button>');
  if(invoice){view.innerHTML=html+invoiceView(invoice);return}
@@ -126,16 +147,16 @@ function render(){
    const cash=day.filter(e=>e.method==='Cash').reduce((n,e)=>n+e.flow,0);
    const incoming=day.reduce((n,e)=>n+Math.max(0,e.flow||0),0);
    const dues=balances().filter(x=>x.side==='Customer').reduce((n,x)=>n+x.balance,0);
-   html+='<div class="row">'+[['Sale','New sale'],['Purchase','Receive stock'],['Payments','Record payment'],['Stock','Check stock']].map(([p,l])=>'<button class="primary" data-page="'+p+'">'+l+'</button>').join('')+'</div><div class="grid">'+[['Sales today',money(sales)],['Money received today',money(incoming)],['Net cash movement today',money(cash)],['Customer balances',money(dues)]].map(([l,v])=>'<div class="panel">'+l+'<strong class="metric">'+v+'</strong></div>').join('')+'</div><div class="panel"><h2>Today’s closing</h2>'+table(['Method','Received','Paid out','Net'],['Cash','UPI','Bank'].map(m=>{const flow=day.filter(e=>e.method===m);const received=flow.reduce((n,e)=>n+Math.max(0,e.flow||0),0);const paid=flow.reduce((n,e)=>n+Math.max(0,-e.flow||0),0);return [m,money(received),money(paid),money(received-paid)]}))+'<p class="muted">Expected drawer cash equals opening drawer cash plus net cash movement.</p></div>';
+   html+='<div class="row quick-actions">'+[['Sale','New sale'],['Purchase','Receive stock'],['Payments','Record payment'],['Stock','Check stock']].map(([p,l])=>'<button class="primary" data-page="'+p+'">'+l+'</button>').join('')+'</div><div class="grid">'+[['Sales today',money(sales)],['Money received today',money(incoming)],['Net cash movement today',money(cash)],['Customer balances',money(dues)]].map(([l,v])=>'<div class="panel">'+l+'<strong class="metric">'+v+'</strong></div>').join('')+'</div><div class="panel"><h2>Today’s closing</h2>'+table(['Method','Received','Paid out','Net'],['Cash','UPI','Bank'].map(m=>{const flow=day.filter(e=>e.method===m);const received=flow.reduce((n,e)=>n+Math.max(0,e.flow||0),0);const paid=flow.reduce((n,e)=>n+Math.max(0,-e.flow||0),0);return [m,money(received),money(paid),money(received-paid)]}))+'<p class="muted">Expected drawer cash equals opening drawer cash plus net cash movement.</p></div>';
  }
  if(page==='Stock'){
    html+='<div class="panel"><label>Search name or barcode<input id="search"></label><div id="stock"></div></div><form data-action="product"><h2>Create item and enter opening stock</h2><div class="fields">'+productFields()+qtyFields()+input('Opening cost per loose unit ₹','cost','number',rupees)+'</div><button class="primary">Save item</button></form>';
  }
  if(page==='Purchase'||page==='Sale'){
    const purchase=page==='Purchase';
-   html+='<form data-action="line"><h2>Add a line</h2><div class="fields">'+select('Product','product',purchase?[...productOptions(),['new','Create new item']]:productOptions())+qtyFields()+(purchase?input('Free cartons','freeBoxes','number',whole)+input('Free loose units','freeUnits','number',whole)+input('Line cost before GST ₹','cost','number',rupees):'')+'</div>'+(purchase?'<fieldset id="new-item" hidden disabled><legend>New item details</legend><div class="fields">'+productFields()+'</div></fieldset>':'')+'<button>Add line</button></form>';
+   html+='<form data-action="line"><h2>Add a line</h2><div class="fields">'+select('Product','product',purchase?[...productOptions(),['new','Create new item']]:productOptions())+qtyFields()+(purchase?input('Free cartons','freeBoxes','number',whole)+input('Free loose units','freeUnits','number',whole)+input('Line cost before GST ₹','cost','number',rupees):'')+'</div>'+(purchase?'<fieldset id="new-item" hidden disabled><legend>New item details</legend><div class="fields">'+productFields()+'</div></fieldset>':'')+'<div class="live-total" id="line-preview" aria-live="polite"></div><button>Add line</button></form>';
    if(lines.length){
-     html+='<div class="panel">'+table(['Product','Units','Before GST','Demo GST','Total'],lines.map(l=>[l.name,l.quantity,money(l.base),money(l.tax),money(l.base+l.tax)]))+'<div class="row">'+lines.map((l,i)=>'<button data-remove="'+i+'">Remove line '+(i+1)+'</button>').join('')+'</div></div><form data-action="post"><h2>Total '+money(lines.reduce((sum,l)=>sum+l.base+l.tax,0))+'</h2><div class="fields">'+input(purchase?'Supplier':'Customer','party','text',required)+input(purchase?'Amount paid ₹':'Amount received ₹','paid','number',rupees)+method()+'</div><button class="primary">'+(purchase?'Save purchase':'Save demo invoice')+'</button></form>';
+     html+='<div class="panel">'+table(['Product','Units','Before GST','Demo GST','Total'],lines.map(l=>[l.name,l.quantity,money(l.base),money(l.tax),money(l.base+l.tax)]))+'<div class="row">'+lines.map((l,i)=>'<button data-remove="'+i+'">Remove line '+(i+1)+'</button>').join('')+'</div></div><form data-action="post"><h2>Total '+money(lines.reduce((sum,l)=>sum+l.base+l.tax,0))+'</h2><div class="fields">'+input(purchase?'Supplier':'Customer','party','text',required)+input(purchase?'Amount paid ₹':'Amount received ₹','paid','number',rupees)+method()+'</div><div class="live-total" id="balance-preview" aria-live="polite"></div><button class="primary">'+(purchase?'Save purchase':'Save demo invoice')+'</button></form>';
    }
  }
  if(page==='Payments'){
@@ -153,16 +174,22 @@ function render(){
  }
  view.innerHTML=html;
  if(page==='Stock')stockTable('');
+ updatePreviews();
 }
 function stockTable(query){
  const q=query.trim().toLowerCase();
- document.querySelector('#stock').innerHTML=table(['Product','Cartons','Loose','Units/carton','Carton price','Loose price','Stock value'],data.products.filter(p=>p.name.toLowerCase().includes(q)||p.barcode.includes(q)).map(p=>[p.name,Math.floor(p.stock/p.pack),p.stock%p.pack,p.pack,money(p.carton),money(p.loose),money(Math.round(p.stock*p.cost))]));
+ const matches=data.products.filter(p=>p.name.toLowerCase().includes(q)||p.barcode.toLowerCase().includes(q));
+ if(!matches.length){
+   document.querySelector('#stock').innerHTML='<p class="empty">'+(q?'No matching products.':'No items yet. Create one below or receive stock from Purchase.')+'</p>';
+   return;
+ }
+ document.querySelector('#stock').innerHTML=table(['Product','Cartons','Loose','Units/carton','Carton price','Loose price','Stock value'],matches.map(p=>[p.name,Math.floor(p.stock/p.pack),p.stock%p.pack,p.pack,money(p.carton),money(p.loose),money(Math.round(p.stock*p.cost))]));
 }
 function invoiceView(e){
  const shop=e.shop;
  return '<div class="panel"><h2>'+escape(shop.name)+'</h2><p>'+escape(shop.address)+'</p><p>GSTIN '+escape(shop.gstin||'—')+'</p><p>Demo only · Invoice '+e.id+' · '+escape(e.date)+'</p><p>Customer '+escape(e.party)+'</p>'+table(['Product','HSN','Cartons','Loose','Before GST','Demo GST','Total'],e.lines.map(l=>[l.name,l.hsn,l.boxes,l.units,money(l.base),money(l.tax),money(l.base+l.tax)]))+'<p>Total '+money(e.total)+' · Paid '+money(e.flow)+' · Due '+money(e.due)+'</p><div class="row"><button data-print>Print / save PDF</button><button data-page="Ledger">Back to ledger</button></div></div>';
 }
-function addLine(f){
+function calculateLine(f){
  const purchase=page==='Purchase', id=fstr(f,'product');
  const existing=product(data,id)||lines.find(l=>l.newProduct?.id===id)?.newProduct;
  const fresh=id==='new'?makeProduct(f):null;
@@ -171,16 +198,46 @@ function addLine(f){
  if(fresh)addProduct({products:[...data.products,...lines.flatMap(l=>l.newProduct?[l.newProduct]:[])]},fresh);
  const free=purchase?num(f,'freeBoxes')*p.pack+num(f,'freeUnits'):0;
  const count=quantity(f,p)+free;
- if(count<1)throw Error('Enter at least one unit.');
  const base=purchase?paise(f,'cost'):num(f,'boxes')*p.carton+num(f,'units')*p.loose;
- lines.push({id:p.id,name:p.name,hsn:p.hsn,boxes:num(f,'boxes'),units:num(f,'units'),quantity:count,base,tax:Math.round(base*p.tax/100),newProduct:fresh,fields:Object.fromEntries(f)});
+ return {id:p.id,name:p.name,hsn:p.hsn,boxes:num(f,'boxes'),units:num(f,'units'),quantity:count,base,tax:Math.round(base*p.tax/100),newProduct:fresh,fields:Object.fromEntries(f)};
 }
-document.addEventListener('input',e=>{if(e.target.id==='search')stockTable(e.target.value)});
+function addLine(form){
+ const line=calculateLine(form);
+ if(line.quantity<1)throw Error('Enter at least one unit.');
+ lines.push(line);
+}
+function updatePreviews(){
+ const preview=document.querySelector('#line-preview');
+ if(preview){
+   const form=new FormData(preview.closest('form'));
+   try{
+     const line=calculateLine(form);
+     const item=product(data,line.id);
+     const available=item?.stock-lines.filter(row=>row.id===line.id).reduce((sum,row)=>sum+row.quantity,0);
+     const stock=page==='Sale'&&item?' · '+available+' units available':'';
+     const warning=page==='Sale'&&line.quantity>available?' · Insufficient stock':'';
+     preview.textContent=line.quantity+' units'+stock+' · Line total '+money(line.base+line.tax)+warning;
+   }catch{
+     preview.textContent='Select a product to see the line total.';
+   }
+ }
+ const balance=document.querySelector('#balance-preview');
+ if(balance){
+   const total=lines.reduce((sum,line)=>sum+line.base+line.tax,0);
+   const paid=paise(new FormData(balance.closest('form')),'paid');
+   balance.textContent=paid>total?'Payment exceeds the bill total.':'Outstanding after payment '+money(total-paid);
+ }
+}
+document.addEventListener('input',e=>{
+ if(e.target.id==='search')stockTable(e.target.value);
+ if(e.target.closest('form[data-action="line"],form[data-action="post"]'))updatePreviews();
+});
 document.addEventListener('change',e=>{
  if(e.target.name==='product'&&page==='Purchase'){
    const field=document.querySelector('#new-item');
-   field.hidden=field.disabled=e.target.value!=='new';
+   if(field)field.hidden=field.disabled=e.target.value!=='new';
  }
+ if(e.target.closest('form[data-action="line"],form[data-action="post"]'))updatePreviews();
 });
 document.addEventListener('click',async e=>{
  const b=e.target.closest('button');

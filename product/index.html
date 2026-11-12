@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dheeraj Wholesale</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f5f6ef;color:#192c23;font:16px system-ui}header{background:#183a2e;color:white;padding:24px clamp(18px,5vw,64px)}header strong{font-size:24px}header small{display:block;color:#c8ded0;margin-top:5px}nav{display:flex;gap:7px;overflow:auto;padding:14px clamp(18px,5vw,64px);background:#fff}button{cursor:pointer;border:0;border-radius:9px;background:#e5eee4;color:#183a2e;padding:11px 15px;font:inherit;font-weight:650;white-space:nowrap}button.active,button.primary{background:#245841;color:white}main{max-width:1160px;margin:auto;padding:24px 18px}h1{margin:0 0 14px;font-size:clamp(26px,5vw,40px)}h2{font-size:20px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:12px}.panel,form{background:white;border:1px solid #e0e5db;border-radius:14px;padding:16px;margin:12px 0}.metric{display:block;font-size:27px;margin-top:7px}.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:12px;margin:10px 0 16px}label{display:grid;gap:5px;font-size:14px;font-weight:600}input,select{width:100%;min-width:0;padding:10px;border:1px solid #aab8ab;border-radius:7px;background:white;font:inherit;color:inherit}.row{display:flex;gap:9px;flex-wrap:wrap;align-items:center}.table{overflow:auto}table{width:100%;border-collapse:collapse;text-align:left}td,th{padding:10px;border-bottom:1px solid #e0e5db;white-space:nowrap}th{background:#eef3eb}#status{min-height:24px;color:#245841;font-weight:600}.muted{color:#53675c}fieldset{border:1px solid #d9e3d8;border-radius:10px;margin:12px 0}button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #b47a26;outline-offset:2px}@media print{header,nav,#status,button{display:none}main{padding:0}body{background:white}}
+</style>
+<header><strong>Dheeraj Wholesale</strong><small>Shared shop workspace</small></header>
+<nav aria-label="Main navigation"></nav><main><div id="status" role="status"></div><section id="view"></section></main>
+<script>
+'use strict';
+let data;
+let revision;
+let saving = false;
+let page = 'Overview', lines = [], invoice = null;
+const pages = ['Overview','Stock','Purchase','Sale','Payments','Returns','Ledger','Settings'];
+const view = document.querySelector('#view');
+const status = document.querySelector('#status');
+const money = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(n/100);
+const escape = s => String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const today = () => new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+const product = (state,id) => state.products.find(p=>p.id===id);
+async function save(change){
+ if(saving)throw Error('A save is already in progress.');
+ const next = structuredClone(data);
+ change(next);
+ saving = true;
+ try{
+   const response = await fetch('/api/state',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision,data:next})});
+   if(response.status===409){
+     await loadState();
+     render();
+     throw Error('Another device saved changes. Review the latest records before retrying.');
+   }
+   if(!response.ok)throw Error('Save failed. Reopen the workspace to check whether it was recorded before retrying.');
+   ({revision}=await response.json());
+   data=next;
+ }finally{saving=false}
+}
+async function loadState(){
+ const response=await fetch('/api/state',{cache:'no-store'});
+ if(!response.ok)throw Error('Unable to load shop records.');
+ ({data,revision}=await response.json());
+}
+function go(name){page=name;lines=[];invoice=null;status.textContent='';render()}
+function table(headers,rows){
+ return '<div class="table"><table><thead><tr>'+headers.map(h=>'<th>'+escape(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(v=>'<td>'+escape(v)+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
+}
+function input(label,name,type='text',extra=''){
+ return '<label>'+label+'<input name="'+name+'" type="'+type+'" '+extra+'></label>';
+}
+const required = 'required maxlength="120"';
+const whole = 'required min="0" max="100000" step="1" value="0"';
+const rupees = 'required min="0" max="1000000" step=".01" value="0"';
+function select(label,name,options){
+ return '<label>'+label+'<select name="'+name+'">'+options.map(([v,t])=>'<option value="'+escape(v)+'">'+escape(t)+'</option>').join('')+'</select></label>';
+}
+function productFields(){
+ return input('Product name','name','text',required)+input('Barcode','barcode','text','maxlength="64"')+
+ input('Units per carton','pack','number','required min="1" max="10000" value="24"')+
+ input('Carton sale price ₹','carton','number',rupees)+input('Loose sale price ₹','loose','number',rupees)+
+ input('HSN','hsn','text','maxlength="8" pattern="[0-9]{4,8}"')+input('Sample GST %','tax','number','required min="0" max="100" step=".01" value="0"');
+}
+function qtyFields(){return input('Cartons','boxes','number',whole)+input('Loose units','units','number',whole)}
+const fstr=(f,k)=>String(f.get(k)||'').trim();
+const num=(f,k)=>Number(f.get(k)||0);
+const paise=(f,k)=>Math.round(num(f,k)*100);
+function makeProduct(f){
+ const name=fstr(f,'name');
+ if(!name)throw Error('Enter a product name.');
+ return {id:crypto.randomUUID(),name,barcode:fstr(f,'barcode'),pack:num(f,'pack'),carton:paise(f,'carton'),loose:paise(f,'loose'),hsn:fstr(f,'hsn'),tax:num(f,'tax'),stock:0,cost:0};
+}
+function addProduct(s,p){
+ const clean = name=>name.toLowerCase().replace(/\s+/g,' ');
+ if(s.products.some(x=>clean(x.name)===clean(p.name)||(p.barcode&&x.barcode===p.barcode)))throw Error('This product name or barcode already exists. Select the existing product.');
+ s.products.push(p);
+}
+const productOptions=()=>[['','Select a product'],...data.products.map(p=>[p.id,p.name+(p.barcode?' · '+p.barcode:'')])];
+const method=()=>select('Payment method','method',[['Cash','Cash'],['UPI','UPI'],['Bank','Bank']]);
+const quantity=(f,p)=>num(f,'boxes')*p.pack+num(f,'units');
+const entry=(s,type,fields)=>s.entries.push({id:s.next++,date:today(),type,...fields});
+const byParty = value=>value.trim().toLowerCase().replace(/\s+/g,' ');
+function balances(){
+ const parties=new Map();
+ for(const e of data.entries){
+   if(!e.side)continue;
+   const k=e.side+':'+byParty(e.party);
+   if(!parties.has(k))parties.set(k,{side:e.side,party:e.party,balance:0});
+   parties.get(k).balance+=e.due;
+ }
+ return [...parties.values()];
+}
+function render(){
+ document.querySelector('nav').innerHTML=pages.map(p=>'<button type="button" data-page="'+p+'" class="'+(page===p?'active':'')+'">'+p+'</button>').join('');
+ let html='<h1>'+escape(invoice?'Demo invoice':page)+'</h1>';
+ if(invoice){view.innerHTML=html+invoiceView(invoice);return}
+ if(page==='Overview'){
+   const day=data.entries.filter(e=>e.date===today());
+   const sales=day.filter(e=>e.type==='Sale').reduce((n,e)=>n+e.total,0);
+   const cash=day.filter(e=>e.method==='Cash').reduce((n,e)=>n+e.flow,0);
+   const incoming=day.reduce((n,e)=>n+Math.max(0,e.flow||0),0);
+   const dues=balances().filter(x=>x.side==='Customer').reduce((n,x)=>n+x.balance,0);
+   html+='<div class="row">'+[['Sale','New sale'],['Purchase','Receive stock'],['Payments','Record payment'],['Stock','Check stock']].map(([p,l])=>'<button class="primary" data-page="'+p+'">'+l+'</button>').join('')+'</div><div class="grid">'+[['Sales today',money(sales)],['Money received today',money(incoming)],['Net cash movement today',money(cash)],['Customer balances',money(dues)]].map(([l,v])=>'<div class="panel">'+l+'<strong class="metric">'+v+'</strong></div>').join('')+'</div><div class="panel"><h2>Today’s closing</h2>'+table(['Method','Received','Paid out','Net'],['Cash','UPI','Bank'].map(m=>{const flow=day.filter(e=>e.method===m);const received=flow.reduce((n,e)=>n+Math.max(0,e.flow||0),0);const paid=flow.reduce((n,e)=>n+Math.max(0,-e.flow||0),0);return [m,money(received),money(paid),money(received-paid)]}))+'<p class="muted">Expected drawer cash equals opening drawer cash plus net cash movement.</p></div>';
+ }
+ if(page==='Stock'){
+   html+='<div class="panel"><label>Search name or barcode<input id="search"></label><div id="stock"></div></div><form data-action="product"><h2>Create item and enter opening stock</h2><div class="fields">'+productFields()+qtyFields()+input('Opening cost per loose unit ₹','cost','number',rupees)+'</div><button class="primary">Save item</button></form>';
+ }
+ if(page==='Purchase'||page==='Sale'){
+   const purchase=page==='Purchase';
+   html+='<form data-action="line"><h2>Add a line</h2><div class="fields">'+select('Product','product',purchase?[...productOptions(),['new','Create new item']]:productOptions())+qtyFields()+(purchase?input('Free cartons','freeBoxes','number',whole)+input('Free loose units','freeUnits','number',whole)+input('Line cost before GST ₹','cost','number',rupees):'')+'</div>'+(purchase?'<fieldset id="new-item" hidden disabled><legend>New item details</legend><div class="fields">'+productFields()+'</div></fieldset>':'')+'<button>Add line</button></form>';
+   if(lines.length){
+     html+='<div class="panel">'+table(['Product','Units','Before GST','Demo GST','Total'],lines.map(l=>[l.name,l.quantity,money(l.base),money(l.tax),money(l.base+l.tax)]))+'<div class="row">'+lines.map((l,i)=>'<button data-remove="'+i+'">Remove line '+(i+1)+'</button>').join('')+'</div></div><form data-action="post"><h2>Total '+money(lines.reduce((sum,l)=>sum+l.base+l.tax,0))+'</h2><div class="fields">'+input(purchase?'Supplier':'Customer','party','text',required)+input(purchase?'Amount paid ₹':'Amount received ₹','paid','number',rupees)+method()+'</div><button class="primary">'+(purchase?'Save purchase':'Save demo invoice')+'</button></form>';
+   }
+ }
+ if(page==='Payments'){
+   html+='<form data-action="payment"><h2>Collections, payments and opening dues</h2><div class="fields">'+select('Entry type','kind',[['collection','Customer collection'],['supplier','Supplier payment'],['expense','Expense'],['openingCustomer','Opening customer dues'],['openingSupplier','Opening supplier dues']])+input('Party name or expense description','party','text',required)+input('Amount ₹','amount','number',rupees)+method()+'</div><button class="primary">Save entry</button></form>';
+ }
+ if(page==='Returns'){
+   html+='<form data-action="return"><h2>Record return or stock loss</h2><div class="fields">'+select('Adjustment','kind',[['sellable','Customer return · sellable'],['unsellable','Customer return · unsellable'],['supplier','Supplier return'],['damage','Damage'],['expiry','Expiry']])+select('Product','product',productOptions())+qtyFields()+input('Party name or reason','party','text',required)+input('Credit against existing dues ₹','credit','number',rupees)+'</div><button class="primary">Save adjustment</button></form>';
+ }
+ if(page==='Ledger'){
+   html+='<div class="panel"><h2>Party balances</h2>'+table(['Type','Party','Outstanding'],balances().map(x=>[x.side,x.party,money(x.balance)]))+'</div><div class="panel"><h2>Transaction history</h2>'+table(['Ref','Date','Type','Party','Total','Money movement','Change in dues','Stock movement'],[...data.entries].reverse().map(e=>[e.id,e.date,e.type,e.party,money(e.total||0),money(e.flow||0),money(e.due||0),(e.lines||[]).map(l=>l.name+' × '+l.quantity).join(', ')]))+'</div>';
+   html+='<div class="row">'+data.entries.filter(e=>e.type==='Sale').map(e=>'<button data-invoice="'+e.id+'">Invoice '+e.id+'</button>').join('')+'</div>';
+ }
+ if(page==='Settings'){
+   html+='<form data-action="shop"><h2>Shop profile</h2><div class="fields">'+input('Business name','name','text',required+' value="'+escape(data.shop.name)+'"')+input('GSTIN','gstin','text','maxlength="15" value="'+escape(data.shop.gstin)+'"')+input('Address','address','text','maxlength="200" value="'+escape(data.shop.address)+'"')+'</div><button class="primary">Save profile</button></form>';
+ }
+ view.innerHTML=html;
+ if(page==='Stock')stockTable('');
+}
+function stockTable(query){
+ const q=query.trim().toLowerCase();
+ document.querySelector('#stock').innerHTML=table(['Product','Cartons','Loose','Units/carton','Carton price','Loose price','Stock value'],data.products.filter(p=>p.name.toLowerCase().includes(q)||p.barcode.includes(q)).map(p=>[p.name,Math.floor(p.stock/p.pack),p.stock%p.pack,p.pack,money(p.carton),money(p.loose),money(Math.round(p.stock*p.cost))]));
+}
+function invoiceView(e){
+ const shop=e.shop;
+ return '<div class="panel"><h2>'+escape(shop.name)+'</h2><p>'+escape(shop.address)+'</p><p>GSTIN '+escape(shop.gstin||'—')+'</p><p>Demo only · Invoice '+e.id+' · '+escape(e.date)+'</p><p>Customer '+escape(e.party)+'</p>'+table(['Product','HSN','Cartons','Loose','Before GST','Demo GST','Total'],e.lines.map(l=>[l.name,l.hsn,l.boxes,l.units,money(l.base),money(l.tax),money(l.base+l.tax)]))+'<p>Total '+money(e.total)+' · Paid '+money(e.flow)+' · Due '+money(e.due)+'</p><div class="row"><button data-print>Print / save PDF</button><button data-page="Ledger">Back to ledger</button></div></div>';
+}
+function addLine(f){
+ const purchase=page==='Purchase', id=fstr(f,'product');
+ const existing=product(data,id)||lines.find(l=>l.newProduct?.id===id)?.newProduct;
+ const fresh=id==='new'?makeProduct(f):null;
+ const p=fresh||existing;
+ if(!p)throw Error('Select a product.');
+ if(fresh)addProduct({products:[...data.products,...lines.flatMap(l=>l.newProduct?[l.newProduct]:[])]},fresh);
+ const free=purchase?num(f,'freeBoxes')*p.pack+num(f,'freeUnits'):0;
+ const count=quantity(f,p)+free;
+ if(count<1)throw Error('Enter at least one unit.');
+ const base=purchase?paise(f,'cost'):num(f,'boxes')*p.carton+num(f,'units')*p.loose;
+ lines.push({id:p.id,name:p.name,hsn:p.hsn,boxes:num(f,'boxes'),units:num(f,'units'),quantity:count,base,tax:Math.round(base*p.tax/100),newProduct:fresh});
+}
+async function post(f){
+ const purchase=page==='Purchase';
+ const total=lines.reduce((sum,l)=>sum+l.base+l.tax,0);
+ const paid=paise(f,'paid'),party=fstr(f,'party');
+ if(!party||paid>total||!lines.length)throw Error('Enter a party and a payment no greater than the bill total.');
+ await save(s=>{
+   for(const l of lines){
+     if(l.newProduct)addProduct(s,l.newProduct);
+     const p=product(s,l.id);
+     if(purchase){
+       p.cost=(p.stock*p.cost+l.base)/(p.stock+l.quantity);
+       p.stock+=l.quantity;
+     }else{
+       if(l.quantity>p.stock)throw Error('Insufficient stock for '+p.name+'.');
+       p.stock-=l.quantity;
+     }
+   }
+   entry(s,page,{party,side:purchase?'Supplier':'Customer',total,due:total-paid,flow:purchase?-paid:paid,method:fstr(f,'method'),lines:lines.map(({newProduct,...line})=>line),shop:s.shop});
+ });
+ if(!purchase)invoice=data.entries.at(-1);
+ lines=[];
+}
+async function payment(f){
+ const kind=fstr(f,'kind'),party=fstr(f,'party'),amount=paise(f,'amount');
+ if(!party||amount<=0)throw Error('Enter a party or description and a positive amount.');
+ const expense=kind==='expense',opening=kind.startsWith('opening');
+ const side=expense?null:['collection','openingCustomer'].includes(kind)?'Customer':'Supplier';
+ const balance=balances().find(b=>b.side===side&&byParty(b.party)===byParty(party))?.balance||0;
+ if(!opening&&!expense&&amount>balance)throw Error('Payment exceeds the outstanding balance for this party.');
+ const names={collection:'Collection',supplier:'Supplier payment',expense:'Expense',openingCustomer:'Opening customer dues',openingSupplier:'Opening supplier dues'};
+ await save(s=>entry(s,names[kind],{party,side,total:amount,due:expense?0:opening?amount:-amount,flow:opening?0:kind==='collection'?amount:-amount,method:fstr(f,'method')}));
+}
+async function adjust(f){
+ const kind=fstr(f,'kind'),party=fstr(f,'party'),credit=paise(f,'credit');
+ const p=product(data,fstr(f,'product'));
+ if(!p||!party||quantity(f,p)<1)throw Error('Select a product and enter a quantity and party or reason.');
+ const side=kind==='supplier'?'Supplier':['sellable','unsellable'].includes(kind)?'Customer':null;
+ const balance=balances().find(b=>b.side===side&&byParty(b.party)===byParty(party))?.balance||0;
+ if(credit&&(!side||credit>balance))throw Error('Credit must be within this party’s outstanding balance.');
+ const movement=quantity(f,p)*(kind==='sellable'?1:kind==='unsellable'?0:-1);
+ if(p.stock+movement<0)throw Error('Adjustment exceeds stock on hand.');
+ const names={sellable:'Sellable customer return',unsellable:'Unsellable customer return',supplier:'Supplier return',damage:'Damage',expiry:'Expiry'};
+ await save(s=>{product(s,p.id).stock+=movement;entry(s,names[kind],{party,side,total:credit,due:-credit,lines:[{name:p.name,quantity:movement}]})});
+}
+document.addEventListener('input',e=>{if(e.target.id==='search')stockTable(e.target.value)});
+document.addEventListener('change',e=>{
+ if(e.target.name==='product'&&page==='Purchase'){
+   const field=document.querySelector('#new-item');
+   field.hidden=field.disabled=e.target.value!=='new';
+ }
+});
+document.addEventListener('click',async e=>{
+ const b=e.target.closest('button');
+ if(!b)return;
+ if(saving&&(b.dataset.page||b.dataset.remove!==undefined||b.dataset.invoice)){status.textContent='Saving. Please wait.';return}
+ if(b.dataset.page)go(b.dataset.page);
+ if(b.dataset.remove!==undefined){lines.splice(Number(b.dataset.remove),1);render()}
+ if(b.dataset.invoice){invoice=data.entries.find(x=>x.id===Number(b.dataset.invoice));render()}
+ if(b.hasAttribute('data-print'))window.print();
+
+});
+document.addEventListener('submit',async e=>{
+ e.preventDefault();
+ const f=new FormData(e.target), action=e.target.dataset.action;
+ try{
+   if(action==='product')await save(s=>{const p=makeProduct(f);p.stock=quantity(f,p);p.cost=paise(f,'cost');addProduct(s,p)});
+   if(action==='line')addLine(f);
+   if(action==='post')await post(f);
+   if(action==='payment')await payment(f);
+   if(action==='return')await adjust(f);
+   if(action==='shop'){
+     if(!fstr(f,'name'))throw Error('Enter a business name.');
+     await save(s=>s.shop={name:fstr(f,'name'),gstin:fstr(f,'gstin').toUpperCase(),address:fstr(f,'address')});
+   }
+   status.textContent=action==='line'?'Line added.':'Saved.';
+   render();
+ }catch(error){status.textContent=error.message}
+});
+loadState().then(render).catch(error=>status.textContent=error.message);
+</script>

@@ -84,7 +84,7 @@ let saving = false;
 let page = 'Overview', lines = [], invoice = null;
 let duePayment=null;
 let billStep = 'party', paymentDraft = {};
-const pages = ['Overview','Orders','Stock','Purchase','Sale','Payments','Returns','Ledger','Settings'];
+const pages = ['Overview','Orders','Customers','Stock','Purchase','Sale','Payments','Returns','Ledger','Settings'];
 const view = document.querySelector('#view');
 const status = document.querySelector('#status');
 const money = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(n/100);
@@ -95,7 +95,7 @@ import {initializeApp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase
 import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,signOut} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
 import {getFirestore,doc,collection,getDocFromServer,getDocsFromServer,runTransaction} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
 import {applyCommand} from './domain.mjs';
-import {applyOrder,orderAvailability} from './orders.mjs';
+import {applyOrder,orderAvailability,areaKey} from './orders.mjs';
 const configResponse = await fetch('/__/firebase/init.json');
 if(!configResponse.ok){
  status.textContent='Firebase Hosting configuration could not be loaded.';
@@ -108,6 +108,8 @@ const workspace=doc(db,'wholesale','main');
 const items=collection(workspace,'products');
 const journal=collection(workspace,'entries');
 const orders=collection(workspace,'orders');
+const customers=collection(workspace,'customers');
+let editCustomerId='';
 let selectedArea='';
 const login = document.querySelector('#login');
 let pending;
@@ -126,7 +128,12 @@ async function send(action,fields){
      if((meta.data()?.revision??0)!==revision)return null;
      const next=structuredClone(data);
      try{
-       if(['order','dispatch','delivered'].includes(action)){
+       if(action==='customer'){
+         const id=fields.id||receipt.id;
+         if(fields.id&&!next.customers.some(row=>row.id===id))throw Error('Customer profile not found.');
+         applyOrder(next,auth.currentUser.uid,draft,id,today());
+         tx.set(doc(customers,id),next.customers.find(row=>row.id===id));
+       }else if(['order','dispatch','delivered'].includes(action)){
          const id=action==='order'?receipt.id:fields.order;
          applyOrder(next,auth.currentUser.uid,draft,id,today());
          tx.set(doc(orders,id),next.orders.find(row=>row.id===id));
@@ -160,13 +167,14 @@ async function send(action,fields){
 async function loadState(){
  for(let attempt=0;attempt<4;attempt++){
    const before=(await getDocFromServer(workspace)).data();
-   const [products,entries,orderDocs]=await Promise.all([getDocsFromServer(items),getDocsFromServer(journal),getDocsFromServer(orders)]);
+   const [products,entries,orderDocs,customerDocs]=await Promise.all([getDocsFromServer(items),getDocsFromServer(journal),getDocsFromServer(orders),getDocsFromServer(customers)]);
    const after=(await getDocFromServer(workspace)).data();
    if((before?.revision??0)!==(after?.revision??0))continue;
    revision=after?.revision??0;
    data={
      products:products.docs.map(item=>item.data()),
      orders:orderDocs.docs.map(item=>item.data()),
+     customers:customerDocs.docs.map(item=>item.data()),
      entries:entries.docs.map(item=>item.data()).sort((a,b)=>a.id-b.id),
      next:after?.next??1,
      shop:after?.shop??{name:'Dheeraj Wholesale',gstin:'',address:''}
@@ -191,6 +199,7 @@ onAuthStateChanged(auth,async user=>{
  catch(error){status.textContent=error.message;await signOut(auth);status.textContent=error.message}
 });
 const pageInfo={
+ Customers:['Customers','Manage customer names, delivery addresses and areas.'],
  Orders:['Areas & orders','Take orders, check shortages, and track deliveries by area.'],
  Overview:['Today','See today’s sales, money received and customer dues.'],
  Sale:['Make a sale','Add the goods going out. Review the bill before recording payment.'],
@@ -205,7 +214,7 @@ const primaryPages=['Overview','Orders','Stock','Ledger'];
 function go(name){
  if(name===page&&!invoice)return;
  if(name!==page&&lines.length&&!confirm('Leave this page and discard the unsaved bill?'))return;
- page=name;duePayment=null;lines=[];invoice=null;billStep='party';paymentDraft={};status.textContent='';render();
+ page=name;editCustomerId='';duePayment=null;lines=[];invoice=null;billStep='party';paymentDraft={};status.textContent='';render();
  window.scrollTo(0,0);
 }
 function table(headers,rows){
@@ -250,8 +259,8 @@ function balances(){
  const parties=new Map();
  for(const e of data.entries){
    if(!e.side)continue;
-   const k=e.side+':'+byParty(e.party);
-   if(!parties.has(k))parties.set(k,{side:e.side,party:e.party,balance:0});
+   const k=e.side+':'+(e.customerId?'id:'+e.customerId:'name:'+byParty(e.party));
+   if(!parties.has(k))parties.set(k,{key:k,side:e.side,party:data.customers.find(row=>row.id===e.customerId)?.name||e.party,customerId:e.customerId,balance:0});
    parties.get(k).balance+=e.due;
  }
  return [...parties.values()];
@@ -280,6 +289,7 @@ function render(){
    html+='<div class="panel"><h2>Money in and out today</h2>'+table(['Method','Received','Paid out','Net'],['Cash','UPI','Bank'].map(m=>{const flow=day.filter(e=>e.method===m);const received=flow.reduce((n,e)=>n+Math.max(0,e.flow||0),0);const paid=flow.reduce((n,e)=>n+Math.max(0,-e.flow||0),0);return [m,money(received),money(paid),money(received-paid)]}))+'<p class="muted">Expected drawer cash equals opening drawer cash plus net cash movement.</p></div>';
  }
  if(page==='Orders')html+=orderPage();
+ if(page==='Customers')html+=customerPage();
  if(page==='Stock'){
    html+='<div class="panel"><label>Search name or barcode<input id="search"></label><div id="stock"></div></div><form data-action="product"><h2>Create item and enter opening stock</h2><div class="fields">'+productFields()+qtyFields()+input('Opening cost per loose unit ₹','cost','number',rupees)+'</div><button class="primary">Save item</button></form>';
  }
@@ -292,7 +302,7 @@ function render(){
      const side=purchase?'Supplier':'Customer';
      const options=balances().filter(row=>row.side===side).map(row=>'<option value="'+escape(row.party)+'"></option>').join('');
      html+='<form data-action="party"><h2>Who is this bill for?</h2><div class="fields">'+
-       input(side+' name','party','text',required+' list="known-parties" value="'+escape(paymentDraft.party||'')+'"')+
+       (purchase?input(side+' name','party','text',required+' list="known-parties" value="'+escape(paymentDraft.party||'')+'"'):select('Customer','customerId',customerOptions()))+
        '<datalist id="known-parties">'+options+'</datalist></div><button class="primary">Continue to products</button></form>';
    }else{
      html+='<div class="row"><strong>'+escape(paymentDraft.party)+'</strong><button type="button" data-step="party">Change '+(purchase?'supplier':'customer')+'</button></div>';
@@ -327,7 +337,7 @@ function render(){
    const outstanding=balances().filter(row=>row.balance>0);
    for(const side of ['Customer','Supplier']){
      html+='<section class="panel"><h2>'+(side==='Customer'?'To collect from customers':'To pay suppliers')+'</h2>'+
-       (outstanding.filter(row=>row.side===side).map(row=>'<div class="activity-row"><div><strong>'+escape(row.party)+'</strong><small>'+money(row.balance)+' outstanding</small></div><button data-due-side="'+side+'" data-due-party="'+escape(row.party)+'">'+(side==='Customer'?'Collect':'Pay')+'</button></div>').join('')||'<p class="empty">No outstanding balances.</p>')+'</section>';
+       (outstanding.filter(row=>row.side===side).map(row=>'<div class="activity-row"><div><strong>'+escape(row.party)+'</strong><small>'+money(row.balance)+' outstanding</small></div><button data-due-key="'+escape(row.key)+'">'+(side==='Customer'?'Collect':'Pay')+'</button></div>').join('')||'<p class="empty">No outstanding balances.</p>')+'</section>';
    }
    if(duePayment){
      html+='<form data-action="due"><h2>'+escape(duePayment.party)+'</h2><p>Outstanding '+money(duePayment.balance)+'</p><div class="fields">'+
@@ -343,6 +353,8 @@ function render(){
  view.innerHTML=html;
  if(page==='Stock')stockTable('');
  if(page==='Orders')view.querySelector('[name=areaFilter]').value=selectedArea;
+ const customerPicker=view.querySelector('[data-action=party] [name=customerId]');
+ if(customerPicker)customerPicker.value=paymentDraft.customerId||'';
  const paymentForm=view.querySelector('form[data-action="post"]');
  if(paymentForm){
    for(const [name,value] of Object.entries(paymentDraft)){
@@ -352,19 +364,32 @@ function render(){
  }
  updatePreviews();
 }
+function customerOptions(){
+ return [['','Select a customer'],...data.customers.map(row=>[row.id,row.name+' · '+row.area+' · '+row.address])];
+}
+function customerPage(){
+ const row=data.customers.find(item=>item.id===editCustomerId);
+ return '<form data-action="customer"><h2>'+(row?'Edit customer':'Add a customer')+'</h2><input type="hidden" name="id" value="'+escape(row?.id||'')+'"><div class="fields">'+
+   input('Customer name','name','text',required+' value="'+escape(row?.name||'')+'"')+
+   input('Delivery address','address','text',required+' value="'+escape(row?.address||'')+'"')+
+   input('Area','area','text',required+' list="customer-areas" value="'+escape(row?.area||'')+'"')+
+   '</div><datalist id="customer-areas">'+[...new Set(data.customers.map(item=>item.area))].sort().map(area=>'<option value="'+escape(area)+'">').join('')+
+   '</datalist><button class="primary">Save customer</button></form><section class="panel"><h2>Customer profiles</h2>'+
+   (data.customers.map(item=>'<div class="activity-row"><div><strong>'+escape(item.name)+'</strong><small>'+escape(item.area)+' · '+escape(item.address)+'</small></div><button data-edit-customer="'+escape(item.id)+'">Edit</button></div>').join('')||'<p>No customers yet.</p>')+'</section>';
+}
 function orderPage(){
- const areas=[...new Set(data.orders.map(order=>order.area))].sort();
- const rows=data.orders.filter(order=>!selectedArea||order.area===selectedArea).reverse();
+ const areas=[...new Map([...data.customers,...data.orders].map(row=>[areaKey(row.area),row.area])).values()].sort();
+ const rows=data.orders.filter(order=>!selectedArea||areaKey(order.area)===areaKey(selectedArea)).reverse();
  const number=(label,name,value=0)=>input(label,name,'number','required min="0" max="100000" value="'+value+'"');
  const rate=(label,name,value)=>input(label,name,'number','required min="0" max="1000000" step=".01" value="'+(value/100).toFixed(2)+'"');
  const showQty=(units,pack)=>Math.floor(units/pack)+' cartons + '+(units%pack)+' loose';
- let html='<details class="panel"><summary>Take a customer order</summary><form data-action="order"><div class="fields">'+input('Party name','party','text',required)+input('Area','area','text',required+' list="order-areas"')+'</div><datalist id="order-areas">'+areas.map(area=>'<option value="'+escape(area)+'">').join('')+'</datalist><label>Find a product<input id="order-search" type="search"></label>'+
+ let html='<details class="panel"><summary>Take a customer order</summary><form data-action="order"><div class="fields">'+select('Customer','customer',customerOptions())+'</div><p id="delivery-location" role="status"></p><button type="button" data-page="Customers">Manage customers</button><label>Find a product<input id="order-search" type="search"></label>'+
    (data.products.map((item,i)=>'<details class="panel" data-order-product="'+escape(item.name.toLowerCase())+'"><summary>'+escape(item.name)+' · '+item.pack+' per carton</summary><div class="fields">'+number('Cartons','cartons'+i)+number('Loose units','loose'+i)+rate('Rate per carton ₹','rateCarton'+i,item.carton)+rate('Rate per loose unit ₹','rateLoose'+i,item.loose)+'</div></details>').join('')||'<p>Receive stock or create products first.</p>')+
    '<button class="primary">Save order</button></form></details><section class="panel">'+select('Show orders for','areaFilter',[['','All areas'],...areas.map(area=>[area,area])])+'</section>';
- const sales=data.entries.filter(entry=>entry.type==='Sale'&&entry.area&&(!selectedArea||entry.area===selectedArea));
+ const sales=data.entries.filter(entry=>entry.type==='Sale'&&entry.area&&(!selectedArea||areaKey(entry.area)===areaKey(selectedArea)));
  const revenue=sales.reduce((sum,entry)=>sum+(entry.lines||[]).reduce((n,line)=>n+line.base,0),0);
  const cost=sales.reduce((sum,entry)=>sum+(entry.lines||[]).reduce((n,line)=>n+(line.cost||0),0),0);
- html+='<div class="grid"><div class="panel">Order sales before tax<strong class="metric">'+money(revenue)+'</strong></div><div class="panel">Gross margin before returns and expenses<strong class="metric">'+money(revenue-cost)+'</strong></div></div>';
+ html+='<div class="grid"><div class="panel">Area sales before tax<strong class="metric">'+money(revenue)+'</strong></div><div class="panel">Gross margin before returns and expenses<strong class="metric">'+money(revenue-cost)+'</strong></div></div>';
  const performance=new Map();
  for(const entry of sales)for(const line of entry.lines||[]){
    const totals=performance.get(line.name)||{units:0,sales:0};
@@ -378,7 +403,7 @@ function orderPage(){
    const sent=order.dispatches.length>0;
    const ready=available.some(line=>line.available>0);
    const state=pending?(sent?'Partially sent':ready?'Ready to dispatch':'Waiting for stock'):order.dispatches.some(row=>!row.delivered)?'Out for delivery':'Delivered';
-   html+='<details class="panel"><summary><strong>'+escape(order.party)+'</strong> · '+escape(order.area)+' · '+state+'</summary><p>'+escape(order.date)+'</p>'+
+   html+='<details class="panel"><summary><strong>'+escape(order.party)+'</strong> · '+escape(order.area)+' · '+state+'</summary><p>'+escape(order.date)+(order.address?' · '+escape(order.address):'')+'</p>'+
      table(['Product','Ordered','Sent','Still to send','Available now'],available.map(line=>[line.name,...[line.ordered,line.sent,line.pending,line.available].map(value=>showQty(value,line.pack))]));
    for(const dispatch of order.dispatches){
      html+='<div class="activity-row"><span>Bill '+dispatch.entryId+' · '+(dispatch.delivered?'Delivered '+escape(dispatch.deliveryDate):'Out for delivery')+'</span><div class="row"><button data-invoice="'+dispatch.entryId+'">View bill</button>'+
@@ -471,6 +496,11 @@ document.addEventListener('input',e=>{
  if(e.target.closest('form[data-action="line"],form[data-action="post"]'))updatePreviews();
 });
 document.addEventListener('change',e=>{
+ if(e.target.name==='customer'&&e.target.closest('[data-action=order]')){
+   const customer=data.customers.find(row=>row.id===e.target.value);
+   view.querySelector('#delivery-location').textContent=customer?customer.address+' · '+customer.area:'';
+ }
+
  if(e.target.name==='areaFilter'){selectedArea=e.target.value;render();return}
  if(e.target.name==='product'&&page==='Purchase'){
    const field=document.querySelector('#new-item');
@@ -488,7 +518,7 @@ document.addEventListener('click',async e=>{
    return;
  }
  if(b.hasAttribute('data-logout')&&!saving){await signOut(auth);return}
- if(saving&&(b.dataset.page||b.dataset.step||b.dataset.dueSide||b.dataset.remove!==undefined||b.dataset.invoice)){status.textContent='Saving. Please wait.';return}
+ if(saving&&(b.dataset.page||b.dataset.step||b.dataset.editCustomer||b.dataset.dueKey||b.dataset.remove!==undefined||b.dataset.invoice)){status.textContent='Saving. Please wait.';return}
  if(b.dataset.step){
    const form=view.querySelector('form[data-action="post"]');
    if(form)Object.assign(paymentDraft,Object.fromEntries(new FormData(form)));
@@ -498,12 +528,13 @@ document.addEventListener('click',async e=>{
    view.querySelector('h1').scrollIntoView({block:'start'});
    return;
  }
- if(b.dataset.dueSide){
-   duePayment=balances().find(row=>row.side===b.dataset.dueSide&&row.party===b.dataset.dueParty);
+ if(b.dataset.dueKey){
+   duePayment=balances().find(row=>row.key===b.dataset.dueKey);
    render();
    view.querySelector('form[data-action="due"] input')?.focus();
    return;
  }
+ if(b.dataset.editCustomer){editCustomerId=b.dataset.editCustomer;render();view.querySelector('[name=name]').focus();return}
  if(b.dataset.deliver){
    try{await send('delivered',{order:b.dataset.deliver,entry:b.dataset.entry});status.textContent='Delivery recorded.';render()}
    catch(error){status.textContent=error.message}
@@ -522,9 +553,11 @@ document.addEventListener('submit',async e=>{
    if(e.target===login)return;
    if(saving)throw Error('Saving. Please wait.');
    if(action==='party'){
-     const party=fstr(f,'party');
+     const customer=page==='Sale'?data.customers.find(row=>row.id===fstr(f,'customerId')):null;
+     const party=page==='Sale'?customer?.name:fstr(f,'party');
      if(!party)throw Error('Enter a customer or supplier name.');
      paymentDraft.party=party;
+     if(customer)paymentDraft.customerId=customer.id;
      billStep='products';status.textContent='';render();return;
    }
    if(action==='line')addLine(f);
@@ -535,14 +568,17 @@ document.addEventListener('submit',async e=>{
        if(fields.paymentStatus==='partial'&&(paise(f,'paid')<=0||paise(f,'paid')>=total))throw Error('Part payment must be greater than zero and less than the bill total.');
        fields.paid=fields.paymentStatus==='full'?(total/100).toFixed(2):fields.paymentStatus==='credit'?'0':fields.paid;
        fields.party=paymentDraft.party;
+       if(page==='Sale')fields.customerId=paymentDraft.customerId;
        delete fields.paymentStatus;
      }
      if(action==='due'){
        fields.party=duePayment.party;
+       if(duePayment.customerId)fields.customerId=duePayment.customerId;
        fields.kind=duePayment.side==='Customer'?'collection':'supplier';
      }
      const entryId=await send(action==='due'?'payment':action,fields);
      if(action==='due')duePayment=null;
+     if(action==='customer')editCustomerId='';
      if(action==='dispatch')invoice=data.entries.find(entry=>entry.id===entryId);
      if(action==='post'){
        if(page==='Sale')invoice=data.entries.find(entry=>entry.id===entryId);

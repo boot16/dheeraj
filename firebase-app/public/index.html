@@ -41,7 +41,8 @@ const today = () => new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',yea
 const product = (state,id) => state.products.find(p=>p.id===id);
 import {initializeApp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js';
 import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,signOut} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
-import {getFunctions,httpsCallable} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-functions.js';
+import {getFirestore,doc,collection,getDocFromServer,getDocsFromServer,runTransaction} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
+import {applyCommand} from './domain.mjs';
 const configResponse = await fetch('/__/firebase/init.json');
 if(!configResponse.ok){
  status.textContent='Firebase Hosting configuration could not be loaded.';
@@ -49,7 +50,10 @@ if(!configResponse.ok){
 }
 const app = initializeApp(await configResponse.json());
 const auth = getAuth(app);
-const call = httpsCallable(getFunctions(app,'asia-south1'),'wholesale');
+const db=getFirestore(app);
+const workspace=doc(db,'wholesale','main');
+const items=collection(workspace,'products');
+const journal=collection(workspace,'entries');
 const login = document.querySelector('#login');
 let pending;
 async function send(action,fields){
@@ -60,18 +64,54 @@ async function send(action,fields){
  pending ||= {key,id:crypto.randomUUID()};
  saving=true;
  try{
-   const result=await call({...draft,id:pending.id,revision});
-   ({data,revision}=result.data);
-   return result.data.entryId;
+   const receipt=doc(workspace,'commands',pending.id);
+   const result=await runTransaction(db,async tx=>{
+     const [meta,previous]=await Promise.all([tx.get(workspace),tx.get(receipt)]);
+     if(previous.exists())return {entryId:previous.data().entryId};
+     if((meta.data()?.revision??0)!==revision)return null;
+     const next=structuredClone(data);
+     try{applyCommand(next,auth.currentUser.uid,draft)}
+     catch(error){error.invalidDraft=true;throw error}
+     const originals=new Map(data.products.map(item=>[item.id,JSON.stringify(item)]));
+     for(const item of next.products){
+       if(originals.get(item.id)!==JSON.stringify(item))tx.set(doc(items,item.id),item);
+     }
+     const entry=next.entries[data.entries.length];
+     const entryId=entry?.id??null;
+     if(entry)tx.set(doc(journal,String(entryId)),entry);
+     tx.set(workspace,{revision:revision+1,shop:next.shop,next:next.next,lastCommand:receipt.id});
+     tx.set(receipt,{entryId});
+     return {entryId};
+   });
+   if(!result)pending=null;
+   await loadState();
    pending=null;
+   if(!result){
+     render();
+     throw Error('Another device saved changes. Review the updated stock and bill before retrying.');
+   }
+   return result.entryId;
  }catch(error){
-   if(['functions/invalid-argument','functions/permission-denied','functions/resource-exhausted','functions/failed-precondition'].includes(error.code))pending=null;
-   if(error.code==='functions/failed-precondition'){await loadState();render()}
+   if(error.invalidDraft||error.code==='permission-denied')pending=null;
    throw error;
  }finally{saving=false}
 }
 async function loadState(){
- ({data,revision}=(await call({action:'read'})).data);
+ for(let attempt=0;attempt<4;attempt++){
+   const before=(await getDocFromServer(workspace)).data();
+   const [products,entries]=await Promise.all([getDocsFromServer(items),getDocsFromServer(journal)]);
+   const after=(await getDocFromServer(workspace)).data();
+   if((before?.revision??0)!==(after?.revision??0))continue;
+   revision=after?.revision??0;
+   data={
+     products:products.docs.map(item=>item.data()),
+     entries:entries.docs.map(item=>item.data()).sort((a,b)=>a.id-b.id),
+     next:after?.next??1,
+     shop:after?.shop??{name:'Dheeraj Wholesale',gstin:'',address:''}
+   };
+   return;
+ }
+ throw Error('Shop records are changing. Try again.');
 }
 login.addEventListener('submit',async event=>{
  event.preventDefault();
@@ -255,6 +295,7 @@ document.addEventListener('submit',async e=>{
  const f=new FormData(e.target), action=e.target.dataset.action;
  try{
    if(e.target===login)return;
+   if(saving)throw Error('Saving. Please wait.');
    if(action==='line')addLine(f);
    else{
      const entryId=await send(action,Object.fromEntries(f));

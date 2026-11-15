@@ -59,6 +59,20 @@ fieldset{min-inline-size:0}.cart-row:last-child{border-bottom:0}
 .task-panel{margin:18px 0}
 .task-panel .quick-actions{margin:0}
 @media(max-width:680px){.bill-footer button{width:100%}.bill-steps li{padding-inline:3px}}
+
+.workbench{background:#133d2e;color:white;border-radius:19px;padding:clamp(17px,4vw,32px);margin-bottom:20px}
+.workbench h2{font-size:clamp(22px,4vw,32px);margin-bottom:14px}
+.workbench button{background:#eef7ec;color:#153b2c}
+.workbench button.primary{background:#d5f49b;color:#173e26}
+.attention,.activity{display:grid;gap:10px;margin:16px 0}
+.attention{grid-template-columns:repeat(2,minmax(0,1fr))}
+.attention button{white-space:normal;text-align:left;background:#fff;border:1px solid var(--line);padding:14px}
+.attention strong{display:block;font-size:20px;margin-top:4px}
+.activity-row{display:flex;justify-content:space-between;gap:14px;padding:12px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+.activity-row small{display:block;color:#496358;margin-top:3px}
+[hidden]{display:none!important}.bill-steps li{min-width:0;overflow-wrap:anywhere}
+form[data-action=post] fieldset{padding:12px}
+@media(max-width:680px){.workbench .row button{flex:1}.activity-row{align-items:flex-start}}
 </style>
 <header><span class="brand-mark" aria-hidden="true">DW</span><div><strong>Dheeraj Wholesale</strong><small>Inventory &amp; accounts</small></div></header>
 <nav aria-label="Main navigation"></nav><main><div id="status" role="status"></div><section id="view"></section></main>
@@ -68,7 +82,8 @@ let data;
 let revision;
 let saving = false;
 let page = 'Overview', lines = [], invoice = null;
-let billStep = 'products', paymentDraft = {};
+let duePayment=null;
+let billStep = 'party', paymentDraft = {};
 const pages = ['Overview','Stock','Purchase','Sale','Payments','Returns','Ledger','Settings'];
 const view = document.querySelector('#view');
 const status = document.querySelector('#status');
@@ -161,25 +176,25 @@ onAuthStateChanged(auth,async user=>{
  document.querySelector('nav').innerHTML='';
  view.innerHTML='';
  status.textContent='';
- if(!user){data=undefined;pending=null;lines=[];invoice=null;billStep='products';paymentDraft={};page='Overview';return}
+ if(!user){data=undefined;duePayment=null;pending=null;lines=[];invoice=null;billStep='party';paymentDraft={};page='Overview';return}
  try{await loadState();render()}
  catch(error){status.textContent=error.message;await signOut(auth);status.textContent=error.message}
 });
 const pageInfo={
- Overview:['Home','See today’s sales, money received and customer dues.'],
+ Overview:['Today','See today’s sales, money received and customer dues.'],
  Sale:['Make a sale','Add the goods going out. Review the bill before recording payment.'],
  Purchase:['Receive stock','Enter the products and quantities delivered by your supplier.'],
  Stock:['Stock on hand','Find a product to check how many cartons and loose units are available.'],
  Payments:['Record money','Record customer collections, supplier payments or shop expenses.'],
  Returns:['Returns & losses','Put sellable returns back into stock or record goods that can’t be sold.'],
- Ledger:['Dues & history','See who owes money and review earlier transactions.'],
+ Ledger:['Dues','See who owes money and review earlier transactions.'],
  Settings:['Shop settings','Update the business details shown on invoices.']
 };
-const primaryPages=['Overview','Sale','Purchase','Stock'];
+const primaryPages=['Overview','Sale','Stock','Ledger'];
 function go(name){
  if(name===page&&!invoice)return;
  if(name!==page&&lines.length&&!confirm('Leave this page and discard the unsaved bill?'))return;
- page=name;lines=[];invoice=null;billStep='products';paymentDraft={};status.textContent='';render();
+ page=name;duePayment=null;lines=[];invoice=null;billStep='party';paymentDraft={};status.textContent='';render();
  window.scrollTo(0,0);
 }
 function table(headers,rows){
@@ -231,7 +246,7 @@ function balances(){
  return [...parties.values()];
 }
 function render(){
- const shortLabels={Overview:'Home',Sale:'Sell',Purchase:'Receive',Stock:'Stock'};
+ const shortLabels={Overview:'Today',Sale:'Sell',Purchase:'Receive',Stock:'Stock'};
  const navButton=(name,label,extra='')=>'<button type="button" data-page="'+name+'" class="'+extra+(page===name?' active':'')+'"'+(page===name?' aria-current="page"':'')+'>'+label+'</button>';
  const morePages=pages.filter(name=>!primaryPages.includes(name));
  document.querySelector('nav').innerHTML=pages.map(name=>navButton(name,shortLabels[name]||pageInfo[name][0],primaryPages.includes(name)?'':'secondary-nav')).join('')+
@@ -246,7 +261,12 @@ function render(){
    const cash=day.filter(e=>e.method==='Cash').reduce((n,e)=>n+e.flow,0);
    const incoming=day.reduce((n,e)=>n+Math.max(0,e.flow||0),0);
    const dues=balances().filter(x=>x.side==='Customer').reduce((n,x)=>n+x.balance,0);
-   html+='<section class="panel task-panel"><h2>What do you need to do?</h2><div class="row quick-actions">'+[['Sale','New sale'],['Purchase','Receive stock'],['Payments','Record payment'],['Stock','Check stock']].map(([p,l])=>'<button class="primary" data-page="'+p+'">'+l+'</button>').join('')+'</div></section><h2>Today’s shop activity</h2><div class="grid">'+[['Sales today',money(sales)],['Money received today',money(incoming)],['Net cash movement today',money(cash)],['Customer balances',money(dues)]].map(([l,v])=>'<div class="panel">'+l+'<strong class="metric">'+v+'</strong></div>').join('')+'</div><div class="panel"><h2>Money in and out today</h2>'+table(['Method','Received','Paid out','Net'],['Cash','UPI','Bank'].map(m=>{const flow=day.filter(e=>e.method===m);const received=flow.reduce((n,e)=>n+Math.max(0,e.flow||0),0);const paid=flow.reduce((n,e)=>n+Math.max(0,-e.flow||0),0);return [m,money(received),money(paid),money(received-paid)]}))+'<p class="muted">Expected drawer cash equals opening drawer cash plus net cash movement.</p></div>';
+   const payable=balances().filter(x=>x.side==='Supplier').reduce((n,x)=>n+x.balance,0);
+   html+='<section class="workbench"><h2>'+escape(data.shop.name)+'</h2><div class="row"><button class="primary" data-page="Sale">New sale</button><button data-page="Purchase">Receive stock</button></div></section>'+
+     '<div class="attention"><button data-page="Ledger">To collect from customers<strong>'+money(dues)+'</strong></button><button data-page="Ledger">To pay suppliers<strong>'+money(payable)+'</strong></button></div>'+
+     '<div class="grid">'+[['Sales today',sales],['Money received today',incoming],['Net cash today',cash]].map(([label,value])=>'<div class="panel">'+label+'<strong class="metric">'+money(value)+'</strong></div>').join('')+'</div>'+
+     '<section class="panel"><h2>Recent shop activity</h2>'+activity(day.slice(-5).reverse())+'<div class="row"><button data-page="Ledger">See dues and history</button><button data-page="Payments">Record other money</button></div></section>';
+   html+='<div class="panel"><h2>Money in and out today</h2>'+table(['Method','Received','Paid out','Net'],['Cash','UPI','Bank'].map(m=>{const flow=day.filter(e=>e.method===m);const received=flow.reduce((n,e)=>n+Math.max(0,e.flow||0),0);const paid=flow.reduce((n,e)=>n+Math.max(0,-e.flow||0),0);return [m,money(received),money(paid),money(received-paid)]}))+'<p class="muted">Expected drawer cash equals opening drawer cash plus net cash movement.</p></div>';
  }
  if(page==='Stock'){
    html+='<div class="panel"><label>Search name or barcode<input id="search"></label><div id="stock"></div></div><form data-action="product"><h2>Create item and enter opening stock</h2><div class="fields">'+productFields()+qtyFields()+input('Opening cost per loose unit ₹','cost','number',rupees)+'</div><button class="primary">Save item</button></form>';
@@ -254,12 +274,21 @@ function render(){
  if(page==='Purchase'||page==='Sale'){
    const purchase=page==='Purchase';
    const total=lines.reduce((sum,line)=>sum+line.base+line.tax,0);
-   const steps=[['products','1. Products'],['review','2. Review'],['payment','3. Payment']];
+   const steps=[['party',purchase?'1. Supplier':'1. Customer'],['products','2. Products'],['review','3. Review'],['payment','4. Payment']];
    html+='<ol class="bill-steps" aria-label="Bill progress">'+steps.map(([step,label])=>'<li'+(billStep===step?' aria-current="step"':'')+'>'+label+'</li>').join('')+'</ol>';
+   if(billStep==='party'){
+     const side=purchase?'Supplier':'Customer';
+     const options=balances().filter(row=>row.side===side).map(row=>'<option value="'+escape(row.party)+'"></option>').join('');
+     html+='<form data-action="party"><h2>Who is this bill for?</h2><div class="fields">'+
+       input(side+' name','party','text',required+' list="known-parties" value="'+escape(paymentDraft.party||'')+'"')+
+       '<datalist id="known-parties">'+options+'</datalist></div><button class="primary">Continue to products</button></form>';
+   }else{
+     html+='<div class="row"><strong>'+escape(paymentDraft.party)+'</strong><button type="button" data-step="party">Change '+(purchase?'supplier':'customer')+'</button></div>';
+   }
    if(billStep==='products'){
    html+='<form data-action="line"><h2>Add a product</h2><div class="fields">'+select('Product','product',purchase?[...productOptions(),['new','Create new item']]:productOptions())+qtyFields()+(purchase?input('Free cartons','freeBoxes','number',whole)+input('Free loose units','freeUnits','number',whole)+input('Line cost before GST ₹','cost','number',rupees):'')+'</div>'+(purchase?'<fieldset id="new-item" hidden disabled><legend>New item details</legend><div class="fields">'+productFields()+'</div></fieldset>':'')+'<div class="live-total" id="line-preview" aria-live="polite"></div><button type="submit" class="primary">'+(purchase?'Add delivered item':'Add to bill')+'</button></form>';
    }
-   if(billStep!=='payment'){
+   if(['products','review'].includes(billStep)){
      html+='<section class="panel"><h2>'+(billStep==='review'?'Check products and quantities':'Products added')+'</h2>';
      html+=lines.length?lines.map((line,i)=>'<div class="cart-row"><div><strong>'+escape(line.name)+'</strong><small>'+line.boxes+' cartons · '+line.units+' loose · '+line.quantity+' total units</small></div><div><strong>'+money(line.base+line.tax)+'</strong><button type="button" data-remove="'+i+'" aria-label="Remove '+escape(line.name)+'">Remove</button></div></div>').join(''):'<p class="empty">Your products will appear here as you add them.</p>';
      if(lines.length){
@@ -269,9 +298,9 @@ function render(){
          (billStep==='review'?'Continue to payment':'Review bill')+'</button></div></div>';
      }
      html+='</section>';
-   }else{
-     html+='<form data-action="post"><h2>'+(purchase?'Record supplier payment':'Record customer payment')+'</h2><p class="page-intro">Bill total <strong>'+money(total)+'</strong>. Enter 0 if no payment was made today.</p><div class="fields">'+
-       input(purchase?'Supplier name':'Customer name','party','text',required)+
+   }else if(billStep==='payment'){
+     html+='<form data-action="post"><h2>'+(purchase?'Record supplier payment':'Record customer payment')+'</h2><p class="page-intro">Bill total <strong>'+money(total)+'</strong>.</p><div class="fields">'+
+       select('Payment status','paymentStatus',[['full','Paid in full'],['partial','Part paid'],['credit','On credit']])+
        input(purchase?'Amount paid today ₹':'Amount received today ₹','paid','number',rupees)+method()+
        '</div><div class="live-total" id="balance-preview" aria-live="polite"></div><div class="row"><button type="button" data-step="review">Back to review</button><button class="primary">'+(purchase?'Save purchase':'Save demo invoice')+'</button></div></form>';
    }
@@ -283,8 +312,18 @@ function render(){
    html+='<form data-action="return"><h2>What happened to the goods?</h2><div class="fields">'+select('Adjustment','kind',[['sellable','Customer return · sellable'],['unsellable','Customer return · unsellable'],['supplier','Supplier return'],['damage','Damage'],['expiry','Expiry']])+select('Product','product',productOptions())+qtyFields()+input('Party name or reason','party','text',required)+input('Reduce outstanding dues by ₹','credit','number',rupees)+'</div><button class="primary">Save adjustment</button></form>';
  }
  if(page==='Ledger'){
-   html+='<div class="panel"><h2>Customer and supplier dues</h2>'+table(['Type','Party','Outstanding'],balances().map(x=>[x.side,x.party,money(x.balance)]))+'</div><div class="panel"><h2>Transaction history</h2>'+table(['Ref','Date','Type','Party','Total','Money movement','Change in dues','Stock movement'],[...data.entries].reverse().map(e=>[e.id,e.date,e.type,e.party,money(e.total||0),money(e.flow||0),money(e.due||0),(e.lines||[]).map(l=>l.name+' × '+l.quantity).join(', ')]))+'</div>';
-   html+='<div class="row">'+data.entries.filter(e=>e.type==='Sale').map(e=>'<button data-invoice="'+e.id+'">Invoice '+e.id+'</button>').join('')+'</div>';
+   const outstanding=balances().filter(row=>row.balance>0);
+   for(const side of ['Customer','Supplier']){
+     html+='<section class="panel"><h2>'+(side==='Customer'?'To collect from customers':'To pay suppliers')+'</h2>'+
+       (outstanding.filter(row=>row.side===side).map(row=>'<div class="activity-row"><div><strong>'+escape(row.party)+'</strong><small>'+money(row.balance)+' outstanding</small></div><button data-due-side="'+side+'" data-due-party="'+escape(row.party)+'">'+(side==='Customer'?'Collect':'Pay')+'</button></div>').join('')||'<p class="empty">No outstanding balances.</p>')+'</section>';
+   }
+   if(duePayment){
+     html+='<form data-action="due"><h2>'+escape(duePayment.party)+'</h2><p>Outstanding '+money(duePayment.balance)+'</p><div class="fields">'+
+       input('Amount ₹','amount','number','required min=".01" step=".01" max="'+(duePayment.balance/100)+'"')+method()+
+       '</div><button class="primary">Save '+(duePayment.side==='Customer'?'collection':'payment')+'</button></form>';
+   }
+   html+='<section class="panel"><h2>Transaction history</h2>'+activity([...data.entries].reverse(),true)+'</section>';
+
  }
  if(page==='Settings'){
    html+='<form data-action="shop"><h2>Shop profile</h2><div class="fields">'+input('Business name','name','text',required+' value="'+escape(data.shop.name)+'"')+input('GSTIN','gstin','text','maxlength="15" value="'+escape(data.shop.gstin)+'"')+input('Address','address','text','maxlength="200" value="'+escape(data.shop.address)+'"')+'</div><button class="primary">Save profile</button></form>';
@@ -299,6 +338,15 @@ function render(){
    }
  }
  updatePreviews();
+}
+function activity(entries,showDetails=false){
+ return entries.map(entry=>{
+   const goods=(entry.lines||[]).map(line=>escape(line.name)+' × '+escape(line.quantity)).join(', ');
+   const details=showDetails?'<small>Ref '+entry.id+' · Money '+money(entry.flow||0)+' · Change in dues '+money(entry.due||0)+'</small>'+
+     (goods?'<small>'+goods+'</small>':''):'';
+   return '<div class="activity-row"><div><strong>'+escape(entry.party)+'</strong><small>'+escape(entry.type)+' · '+escape(entry.date)+'</small>'+details+'</div><div><strong>'+money(entry.total||0)+'</strong>'+
+     (showDetails&&entry.type==='Sale'?'<small><button data-invoice="'+entry.id+'">View bill</button></small>':'')+'</div></div>';
+ }).join('')||'<p class="empty">No transactions yet.</p>';
 }
 function stockTable(query){
  const q=query.trim().toLowerCase();
@@ -348,13 +396,19 @@ function updatePreviews(){
  const balance=document.querySelector('#balance-preview');
  if(balance){
    const total=lines.reduce((sum,line)=>sum+line.base+line.tax,0);
-   const paid=paise(new FormData(balance.closest('form')),'paid');
+   const form=balance.closest('form');
+   const mode=form.elements.paymentStatus.value;
+   const paidField=form.elements.paid;
+   paidField.required=mode==='partial';
+   paidField.closest('label').hidden=mode!=='partial';
+   form.elements.method.closest('label').hidden=mode==='credit';
+   const paid=mode==='full'?total:mode==='credit'?0:paise(new FormData(form),'paid');
    balance.textContent=paid>total?'Payment exceeds the bill total.':'Outstanding after payment '+money(total-paid);
  }
 }
 document.addEventListener('input',e=>{
  const paymentForm=e.target.closest('form[data-action="post"]');
- if(paymentForm)paymentDraft=Object.fromEntries(new FormData(paymentForm));
+ if(paymentForm)Object.assign(paymentDraft,Object.fromEntries(new FormData(paymentForm)));
  if(e.target.id==='search')stockTable(e.target.value);
  if(e.target.closest('form[data-action="line"],form[data-action="post"]'))updatePreviews();
 });
@@ -375,14 +429,20 @@ document.addEventListener('click',async e=>{
    return;
  }
  if(b.hasAttribute('data-logout')&&!saving){await signOut(auth);return}
- if(saving&&(b.dataset.page||b.dataset.step||b.dataset.remove!==undefined||b.dataset.invoice)){status.textContent='Saving. Please wait.';return}
+ if(saving&&(b.dataset.page||b.dataset.step||b.dataset.dueSide||b.dataset.remove!==undefined||b.dataset.invoice)){status.textContent='Saving. Please wait.';return}
  if(b.dataset.step){
    const form=view.querySelector('form[data-action="post"]');
-   if(form)paymentDraft=Object.fromEntries(new FormData(form));
+   if(form)Object.assign(paymentDraft,Object.fromEntries(new FormData(form)));
    billStep=b.dataset.step;
    status.textContent='';
    render();
    view.querySelector('h1').scrollIntoView({block:'start'});
+   return;
+ }
+ if(b.dataset.dueSide){
+   duePayment=balances().find(row=>row.side===b.dataset.dueSide&&row.party===b.dataset.dueParty);
+   render();
+   view.querySelector('form[data-action="due"] input')?.focus();
    return;
  }
  if(b.dataset.page)go(b.dataset.page);
@@ -397,12 +457,31 @@ document.addEventListener('submit',async e=>{
  try{
    if(e.target===login)return;
    if(saving)throw Error('Saving. Please wait.');
+   if(action==='party'){
+     const party=fstr(f,'party');
+     if(!party)throw Error('Enter a customer or supplier name.');
+     paymentDraft.party=party;
+     billStep='products';status.textContent='';render();return;
+   }
    if(action==='line')addLine(f);
    else{
-     const entryId=await send(action,Object.fromEntries(f));
+     const fields=Object.fromEntries(f);
+     if(action==='post'){
+       const total=lines.reduce((sum,line)=>sum+line.base+line.tax,0);
+       if(fields.paymentStatus==='partial'&&(paise(f,'paid')<=0||paise(f,'paid')>=total))throw Error('Part payment must be greater than zero and less than the bill total.');
+       fields.paid=fields.paymentStatus==='full'?(total/100).toFixed(2):fields.paymentStatus==='credit'?'0':fields.paid;
+       fields.party=paymentDraft.party;
+       delete fields.paymentStatus;
+     }
+     if(action==='due'){
+       fields.party=duePayment.party;
+       fields.kind=duePayment.side==='Customer'?'collection':'supplier';
+     }
+     const entryId=await send(action==='due'?'payment':action,fields);
+     if(action==='due')duePayment=null;
      if(action==='post'){
        if(page==='Sale')invoice=data.entries.find(entry=>entry.id===entryId);
-       lines=[];billStep='products';paymentDraft={};
+       lines=[];billStep='party';paymentDraft={};
      }
    }
    status.textContent=action==='line'?'Product added.':action==='post'?(page==='Purchase'?'Purchase saved. Stock updated.':'Sale saved. Stock and dues updated.'):'Saved.';

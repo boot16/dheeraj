@@ -20,6 +20,7 @@ export function applyCommand(data, actor, command) {
    bounded(fields,['boxes','units','freeBoxes','freeUnits'],100000);
    bounded(fields,['carton','loose','cost','paid','amount','credit'],1000000,100);
    bounded(fields,['tax'],100,100);
+   bounded(fields,['cartonRate','looseRate'],100000000);
    if (fields.pack !== undefined) {
      bounded(fields,['pack'],10000);
      if (Number(fields.pack)<1) throw Error('Enter units per carton.');
@@ -64,8 +65,8 @@ function addLine(f){
  const free=purchase?num(f,'freeBoxes')*p.pack+num(f,'freeUnits'):0;
  const count=quantity(f,p)+free;
  if(count<1)throw Error('Enter at least one unit.');
- const base=purchase?paise(f,'cost'):num(f,'boxes')*p.carton+num(f,'units')*p.loose;
- lines.push({id:p.id,name:p.name,hsn:p.hsn,boxes:num(f,'boxes'),units:num(f,'units'),quantity:count,base,tax:Math.round(base*p.tax/100),newProduct:fresh});
+ const base=purchase?paise(f,'cost'):num(f,'boxes')*(f.has('cartonRate')?num(f,'cartonRate'):p.carton)+num(f,'units')*(f.has('looseRate')?num(f,'looseRate'):p.loose);
+ lines.push({id:p.id,name:p.name,hsn:p.hsn,boxes:num(f,'boxes'),units:num(f,'units'),quantity:count,base,tax:Math.round(base*p.tax/100),cost:Math.round(count*p.cost),newProduct:fresh});
 }
 function post(f){
  const purchase=page==='Purchase';

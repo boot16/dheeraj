@@ -50,6 +50,15 @@ fieldset{min-inline-size:0}.cart-row:last-child{border-bottom:0}
   .table td{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:10px;padding:6px 0;border:0;white-space:normal;overflow-wrap:anywhere}
   .table td::before{content:attr(data-label);color:#496358;font-size:13px}
 }
+
+.bill-steps{display:flex;list-style:none;margin:0 0 16px;padding:0;gap:8px;color:#496358;font-size:14px}
+.bill-steps li{flex:1;padding:10px;border-bottom:2px solid var(--line)}
+.bill-steps [aria-current=step]{color:var(--accent);font-weight:750;border-color:var(--accent)}
+.bill-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:14px}
+.bill-footer strong{font-size:20px}
+.task-panel{margin:18px 0}
+.task-panel .quick-actions{margin:0}
+@media(max-width:680px){.bill-footer button{width:100%}.bill-steps li{padding-inline:3px}}
 </style>
 <header><span class="brand-mark" aria-hidden="true">DW</span><div><strong>Dheeraj Wholesale</strong><small>Inventory &amp; accounts</small></div></header>
 <nav aria-label="Main navigation"></nav><main><div id="status" role="status"></div><section id="view"></section></main>
@@ -59,6 +68,7 @@ let data;
 let revision;
 let saving = false;
 let page = 'Overview', lines = [], invoice = null;
+let billStep = 'products', paymentDraft = {};
 const pages = ['Overview','Stock','Purchase','Sale','Payments','Returns','Ledger','Settings'];
 const view = document.querySelector('#view');
 const status = document.querySelector('#status');
@@ -151,13 +161,13 @@ onAuthStateChanged(auth,async user=>{
  document.querySelector('nav').innerHTML='';
  view.innerHTML='';
  status.textContent='';
- if(!user){data=undefined;pending=null;lines=[];invoice=null;page='Overview';return}
+ if(!user){data=undefined;pending=null;lines=[];invoice=null;billStep='products';paymentDraft={};page='Overview';return}
  try{await loadState();render()}
  catch(error){status.textContent=error.message;await signOut(auth);status.textContent=error.message}
 });
 const pageInfo={
  Overview:['Home','See today’s sales, money received and customer dues.'],
- Sale:['Make a sale','Add products, then record what the customer paid.'],
+ Sale:['Make a sale','Add the goods going out. Review the bill before recording payment.'],
  Purchase:['Receive stock','Enter the products and quantities delivered by your supplier.'],
  Stock:['Stock on hand','Find a product to check how many cartons and loose units are available.'],
  Payments:['Record money','Record customer collections, supplier payments or shop expenses.'],
@@ -169,7 +179,7 @@ const primaryPages=['Overview','Sale','Purchase','Stock'];
 function go(name){
  if(name===page&&!invoice)return;
  if(name!==page&&lines.length&&!confirm('Leave this page and discard the unsaved bill?'))return;
- page=name;lines=[];invoice=null;status.textContent='';render();
+ page=name;lines=[];invoice=null;billStep='products';paymentDraft={};status.textContent='';render();
  window.scrollTo(0,0);
 }
 function table(headers,rows){
@@ -236,16 +246,34 @@ function render(){
    const cash=day.filter(e=>e.method==='Cash').reduce((n,e)=>n+e.flow,0);
    const incoming=day.reduce((n,e)=>n+Math.max(0,e.flow||0),0);
    const dues=balances().filter(x=>x.side==='Customer').reduce((n,x)=>n+x.balance,0);
-   html+='<div class="row quick-actions">'+[['Sale','New sale'],['Purchase','Receive stock'],['Payments','Record payment'],['Stock','Check stock']].map(([p,l])=>'<button class="primary" data-page="'+p+'">'+l+'</button>').join('')+'</div><div class="grid">'+[['Sales today',money(sales)],['Money received today',money(incoming)],['Net cash movement today',money(cash)],['Customer balances',money(dues)]].map(([l,v])=>'<div class="panel">'+l+'<strong class="metric">'+v+'</strong></div>').join('')+'</div><div class="panel"><h2>Money in and out today</h2>'+table(['Method','Received','Paid out','Net'],['Cash','UPI','Bank'].map(m=>{const flow=day.filter(e=>e.method===m);const received=flow.reduce((n,e)=>n+Math.max(0,e.flow||0),0);const paid=flow.reduce((n,e)=>n+Math.max(0,-e.flow||0),0);return [m,money(received),money(paid),money(received-paid)]}))+'<p class="muted">Expected drawer cash equals opening drawer cash plus net cash movement.</p></div>';
+   html+='<section class="panel task-panel"><h2>What do you need to do?</h2><div class="row quick-actions">'+[['Sale','New sale'],['Purchase','Receive stock'],['Payments','Record payment'],['Stock','Check stock']].map(([p,l])=>'<button class="primary" data-page="'+p+'">'+l+'</button>').join('')+'</div></section><h2>Today’s shop activity</h2><div class="grid">'+[['Sales today',money(sales)],['Money received today',money(incoming)],['Net cash movement today',money(cash)],['Customer balances',money(dues)]].map(([l,v])=>'<div class="panel">'+l+'<strong class="metric">'+v+'</strong></div>').join('')+'</div><div class="panel"><h2>Money in and out today</h2>'+table(['Method','Received','Paid out','Net'],['Cash','UPI','Bank'].map(m=>{const flow=day.filter(e=>e.method===m);const received=flow.reduce((n,e)=>n+Math.max(0,e.flow||0),0);const paid=flow.reduce((n,e)=>n+Math.max(0,-e.flow||0),0);return [m,money(received),money(paid),money(received-paid)]}))+'<p class="muted">Expected drawer cash equals opening drawer cash plus net cash movement.</p></div>';
  }
  if(page==='Stock'){
    html+='<div class="panel"><label>Search name or barcode<input id="search"></label><div id="stock"></div></div><form data-action="product"><h2>Create item and enter opening stock</h2><div class="fields">'+productFields()+qtyFields()+input('Opening cost per loose unit ₹','cost','number',rupees)+'</div><button class="primary">Save item</button></form>';
  }
  if(page==='Purchase'||page==='Sale'){
    const purchase=page==='Purchase';
-   html+='<form data-action="line"><h2>Add a product</h2><div class="fields">'+select('Product','product',purchase?[...productOptions(),['new','Create new item']]:productOptions())+qtyFields()+(purchase?input('Free cartons','freeBoxes','number',whole)+input('Free loose units','freeUnits','number',whole)+input('Line cost before GST ₹','cost','number',rupees):'')+'</div>'+(purchase?'<fieldset id="new-item" hidden disabled><legend>New item details</legend><div class="fields">'+productFields()+'</div></fieldset>':'')+'<div class="live-total" id="line-preview" aria-live="polite"></div><button>Add to bill</button></form>';
-   if(lines.length){
-     html+='<section class="panel"><h2>Products on this bill</h2>'+lines.map((line,i)=>'<div class="cart-row"><div><strong>'+escape(line.name)+'</strong><small>'+line.quantity+' units · '+money(line.base+line.tax)+'</small></div><button type="button" data-remove="'+i+'" aria-label="Remove '+escape(line.name)+'">Remove</button></div>').join('')+'</section><form data-action="post"><h2>Total '+money(lines.reduce((sum,l)=>sum+l.base+l.tax,0))+'</h2><div class="fields">'+input(purchase?'Supplier name':'Customer name','party','text',required)+input(purchase?'Amount paid ₹':'Amount received ₹','paid','number',rupees)+method()+'</div><div class="live-total" id="balance-preview" aria-live="polite"></div><button class="primary">'+(purchase?'Save purchase':'Save demo invoice')+'</button></form>';
+   const total=lines.reduce((sum,line)=>sum+line.base+line.tax,0);
+   const steps=[['products','1. Products'],['review','2. Review'],['payment','3. Payment']];
+   html+='<ol class="bill-steps" aria-label="Bill progress">'+steps.map(([step,label])=>'<li'+(billStep===step?' aria-current="step"':'')+'>'+label+'</li>').join('')+'</ol>';
+   if(billStep==='products'){
+   html+='<form data-action="line"><h2>Add a product</h2><div class="fields">'+select('Product','product',purchase?[...productOptions(),['new','Create new item']]:productOptions())+qtyFields()+(purchase?input('Free cartons','freeBoxes','number',whole)+input('Free loose units','freeUnits','number',whole)+input('Line cost before GST ₹','cost','number',rupees):'')+'</div>'+(purchase?'<fieldset id="new-item" hidden disabled><legend>New item details</legend><div class="fields">'+productFields()+'</div></fieldset>':'')+'<div class="live-total" id="line-preview" aria-live="polite"></div><button type="submit" class="primary">'+(purchase?'Add delivered item':'Add to bill')+'</button></form>';
+   }
+   if(billStep!=='payment'){
+     html+='<section class="panel"><h2>'+(billStep==='review'?'Check products and quantities':'Products added')+'</h2>';
+     html+=lines.length?lines.map((line,i)=>'<div class="cart-row"><div><strong>'+escape(line.name)+'</strong><small>'+line.boxes+' cartons · '+line.units+' loose · '+line.quantity+' total units</small></div><div><strong>'+money(line.base+line.tax)+'</strong><button type="button" data-remove="'+i+'" aria-label="Remove '+escape(line.name)+'">Remove</button></div></div>').join(''):'<p class="empty">Your products will appear here as you add them.</p>';
+     if(lines.length){
+       html+='<div class="bill-footer"><strong>Bill total '+money(total)+'</strong><div class="row">'+
+         (billStep==='review'?'<button type="button" data-step="products">Add more products</button>':'')+
+         '<button type="button" class="primary" data-step="'+(billStep==='review'?'payment':'review')+'">'+
+         (billStep==='review'?'Continue to payment':'Review bill')+'</button></div></div>';
+     }
+     html+='</section>';
+   }else{
+     html+='<form data-action="post"><h2>'+(purchase?'Record supplier payment':'Record customer payment')+'</h2><p class="page-intro">Bill total <strong>'+money(total)+'</strong>. Enter 0 if no payment was made today.</p><div class="fields">'+
+       input(purchase?'Supplier name':'Customer name','party','text',required)+
+       input(purchase?'Amount paid today ₹':'Amount received today ₹','paid','number',rupees)+method()+
+       '</div><div class="live-total" id="balance-preview" aria-live="polite"></div><div class="row"><button type="button" data-step="review">Back to review</button><button class="primary">'+(purchase?'Save purchase':'Save demo invoice')+'</button></div></form>';
    }
  }
  if(page==='Payments'){
@@ -263,6 +291,13 @@ function render(){
  }
  view.innerHTML=html;
  if(page==='Stock')stockTable('');
+ const paymentForm=view.querySelector('form[data-action="post"]');
+ if(paymentForm){
+   for(const [name,value] of Object.entries(paymentDraft)){
+     const field=paymentForm.elements.namedItem(name);
+     if(field)field.value=value;
+   }
+ }
  updatePreviews();
 }
 function stockTable(query){
@@ -318,6 +353,8 @@ function updatePreviews(){
  }
 }
 document.addEventListener('input',e=>{
+ const paymentForm=e.target.closest('form[data-action="post"]');
+ if(paymentForm)paymentDraft=Object.fromEntries(new FormData(paymentForm));
  if(e.target.id==='search')stockTable(e.target.value);
  if(e.target.closest('form[data-action="line"],form[data-action="post"]'))updatePreviews();
 });
@@ -338,9 +375,18 @@ document.addEventListener('click',async e=>{
    return;
  }
  if(b.hasAttribute('data-logout')&&!saving){await signOut(auth);return}
- if(saving&&(b.dataset.page||b.dataset.remove!==undefined||b.dataset.invoice)){status.textContent='Saving. Please wait.';return}
+ if(saving&&(b.dataset.page||b.dataset.step||b.dataset.remove!==undefined||b.dataset.invoice)){status.textContent='Saving. Please wait.';return}
+ if(b.dataset.step){
+   const form=view.querySelector('form[data-action="post"]');
+   if(form)paymentDraft=Object.fromEntries(new FormData(form));
+   billStep=b.dataset.step;
+   status.textContent='';
+   render();
+   view.querySelector('h1').scrollIntoView({block:'start'});
+   return;
+ }
  if(b.dataset.page)go(b.dataset.page);
- if(b.dataset.remove!==undefined){lines.splice(Number(b.dataset.remove),1);render()}
+ if(b.dataset.remove!==undefined){lines.splice(Number(b.dataset.remove),1);if(!lines.length)billStep='products';render()}
  if(b.dataset.invoice){invoice=data.entries.find(x=>x.id===Number(b.dataset.invoice));render()}
  if(b.hasAttribute('data-print'))window.print();
 
@@ -356,10 +402,10 @@ document.addEventListener('submit',async e=>{
      const entryId=await send(action,Object.fromEntries(f));
      if(action==='post'){
        if(page==='Sale')invoice=data.entries.find(entry=>entry.id===entryId);
-       lines=[];
+       lines=[];billStep='products';paymentDraft={};
      }
    }
-   status.textContent=action==='line'?'Line added.':'Saved.';
+   status.textContent=action==='line'?'Product added.':action==='post'?(page==='Purchase'?'Purchase saved. Stock updated.':'Sale saved. Stock and dues updated.'):'Saved.';
    render();
  }catch(error){status.textContent=error.message}
 });

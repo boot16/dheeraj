@@ -84,7 +84,7 @@ let saving = false;
 let page = 'Overview', lines = [], invoice = null;
 let duePayment=null;
 let billStep = 'party', paymentDraft = {};
-const pages = ['Overview','Stock','Purchase','Sale','Payments','Returns','Ledger','Settings'];
+const pages = ['Overview','Orders','Stock','Purchase','Sale','Payments','Returns','Ledger','Settings'];
 const view = document.querySelector('#view');
 const status = document.querySelector('#status');
 const money = n => new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(n/100);
@@ -95,6 +95,7 @@ import {initializeApp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase
 import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,signOut} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
 import {getFirestore,doc,collection,getDocFromServer,getDocsFromServer,runTransaction} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
 import {applyCommand} from './domain.mjs';
+import {applyOrder,orderAvailability} from './orders.mjs';
 const configResponse = await fetch('/__/firebase/init.json');
 if(!configResponse.ok){
  status.textContent='Firebase Hosting configuration could not be loaded.';
@@ -106,6 +107,8 @@ const db=getFirestore(app);
 const workspace=doc(db,'wholesale','main');
 const items=collection(workspace,'products');
 const journal=collection(workspace,'entries');
+const orders=collection(workspace,'orders');
+let selectedArea='';
 const login = document.querySelector('#login');
 let pending;
 async function send(action,fields){
@@ -122,7 +125,13 @@ async function send(action,fields){
      if(previous.exists())return {entryId:previous.data().entryId};
      if((meta.data()?.revision??0)!==revision)return null;
      const next=structuredClone(data);
-     try{applyCommand(next,auth.currentUser.uid,draft)}
+     try{
+       if(['order','dispatch','delivered'].includes(action)){
+         const id=action==='order'?receipt.id:fields.order;
+         applyOrder(next,auth.currentUser.uid,draft,id,today());
+         tx.set(doc(orders,id),next.orders.find(row=>row.id===id));
+       }else applyCommand(next,auth.currentUser.uid,draft);
+     }
      catch(error){error.invalidDraft=true;throw error}
      const originals=new Map(data.products.map(item=>[item.id,JSON.stringify(item)]));
      for(const item of next.products){
@@ -151,12 +160,13 @@ async function send(action,fields){
 async function loadState(){
  for(let attempt=0;attempt<4;attempt++){
    const before=(await getDocFromServer(workspace)).data();
-   const [products,entries]=await Promise.all([getDocsFromServer(items),getDocsFromServer(journal)]);
+   const [products,entries,orderDocs]=await Promise.all([getDocsFromServer(items),getDocsFromServer(journal),getDocsFromServer(orders)]);
    const after=(await getDocFromServer(workspace)).data();
    if((before?.revision??0)!==(after?.revision??0))continue;
    revision=after?.revision??0;
    data={
      products:products.docs.map(item=>item.data()),
+     orders:orderDocs.docs.map(item=>item.data()),
      entries:entries.docs.map(item=>item.data()).sort((a,b)=>a.id-b.id),
      next:after?.next??1,
      shop:after?.shop??{name:'Dheeraj Wholesale',gstin:'',address:''}
@@ -181,6 +191,7 @@ onAuthStateChanged(auth,async user=>{
  catch(error){status.textContent=error.message;await signOut(auth);status.textContent=error.message}
 });
 const pageInfo={
+ Orders:['Areas & orders','Take orders, check shortages, and track deliveries by area.'],
  Overview:['Today','See today’s sales, money received and customer dues.'],
  Sale:['Make a sale','Add the goods going out. Review the bill before recording payment.'],
  Purchase:['Receive stock','Enter the products and quantities delivered by your supplier.'],
@@ -190,7 +201,7 @@ const pageInfo={
  Ledger:['Dues','See who owes money and review earlier transactions.'],
  Settings:['Shop settings','Update the business details shown on invoices.']
 };
-const primaryPages=['Overview','Sale','Stock','Ledger'];
+const primaryPages=['Overview','Orders','Stock','Ledger'];
 function go(name){
  if(name===page&&!invoice)return;
  if(name!==page&&lines.length&&!confirm('Leave this page and discard the unsaved bill?'))return;
@@ -246,7 +257,7 @@ function balances(){
  return [...parties.values()];
 }
 function render(){
- const shortLabels={Overview:'Today',Sale:'Sell',Purchase:'Receive',Stock:'Stock'};
+ const shortLabels={Orders:'Orders',Overview:'Today',Sale:'Sell',Purchase:'Receive',Stock:'Stock'};
  const navButton=(name,label,extra='')=>'<button type="button" data-page="'+name+'" class="'+extra+(page===name?' active':'')+'"'+(page===name?' aria-current="page"':'')+'>'+label+'</button>';
  const morePages=pages.filter(name=>!primaryPages.includes(name));
  document.querySelector('nav').innerHTML=pages.map(name=>navButton(name,shortLabels[name]||pageInfo[name][0],primaryPages.includes(name)?'':'secondary-nav')).join('')+
@@ -262,12 +273,13 @@ function render(){
    const incoming=day.reduce((n,e)=>n+Math.max(0,e.flow||0),0);
    const dues=balances().filter(x=>x.side==='Customer').reduce((n,x)=>n+x.balance,0);
    const payable=balances().filter(x=>x.side==='Supplier').reduce((n,x)=>n+x.balance,0);
-   html+='<section class="workbench"><h2>'+escape(data.shop.name)+'</h2><div class="row"><button class="primary" data-page="Sale">New sale</button><button data-page="Purchase">Receive stock</button></div></section>'+
+   html+='<section class="workbench"><h2>'+escape(data.shop.name)+'</h2><div class="row"><button class="primary" data-page="Sale">New sale</button><button data-page="Purchase">Receive stock</button><button data-page="Orders">Area orders</button></div></section>'+
      '<div class="attention"><button data-page="Ledger">To collect from customers<strong>'+money(dues)+'</strong></button><button data-page="Ledger">To pay suppliers<strong>'+money(payable)+'</strong></button></div>'+
      '<div class="grid">'+[['Sales today',sales],['Money received today',incoming],['Net cash today',cash]].map(([label,value])=>'<div class="panel">'+label+'<strong class="metric">'+money(value)+'</strong></div>').join('')+'</div>'+
      '<section class="panel"><h2>Recent shop activity</h2>'+activity(day.slice(-5).reverse())+'<div class="row"><button data-page="Ledger">See dues and history</button><button data-page="Payments">Record other money</button></div></section>';
    html+='<div class="panel"><h2>Money in and out today</h2>'+table(['Method','Received','Paid out','Net'],['Cash','UPI','Bank'].map(m=>{const flow=day.filter(e=>e.method===m);const received=flow.reduce((n,e)=>n+Math.max(0,e.flow||0),0);const paid=flow.reduce((n,e)=>n+Math.max(0,-e.flow||0),0);return [m,money(received),money(paid),money(received-paid)]}))+'<p class="muted">Expected drawer cash equals opening drawer cash plus net cash movement.</p></div>';
  }
+ if(page==='Orders')html+=orderPage();
  if(page==='Stock'){
    html+='<div class="panel"><label>Search name or barcode<input id="search"></label><div id="stock"></div></div><form data-action="product"><h2>Create item and enter opening stock</h2><div class="fields">'+productFields()+qtyFields()+input('Opening cost per loose unit ₹','cost','number',rupees)+'</div><button class="primary">Save item</button></form>';
  }
@@ -330,6 +342,7 @@ function render(){
  }
  view.innerHTML=html;
  if(page==='Stock')stockTable('');
+ if(page==='Orders')view.querySelector('[name=areaFilter]').value=selectedArea;
  const paymentForm=view.querySelector('form[data-action="post"]');
  if(paymentForm){
    for(const [name,value] of Object.entries(paymentDraft)){
@@ -338,6 +351,47 @@ function render(){
    }
  }
  updatePreviews();
+}
+function orderPage(){
+ const areas=[...new Set(data.orders.map(order=>order.area))].sort();
+ const rows=data.orders.filter(order=>!selectedArea||order.area===selectedArea).reverse();
+ const number=(label,name,value=0)=>input(label,name,'number','required min="0" max="100000" value="'+value+'"');
+ const rate=(label,name,value)=>input(label,name,'number','required min="0" max="1000000" step=".01" value="'+(value/100).toFixed(2)+'"');
+ const showQty=(units,pack)=>Math.floor(units/pack)+' cartons + '+(units%pack)+' loose';
+ let html='<details class="panel"><summary>Take a customer order</summary><form data-action="order"><div class="fields">'+input('Party name','party','text',required)+input('Area','area','text',required+' list="order-areas"')+'</div><datalist id="order-areas">'+areas.map(area=>'<option value="'+escape(area)+'">').join('')+'</datalist><label>Find a product<input id="order-search" type="search"></label>'+
+   (data.products.map((item,i)=>'<details class="panel" data-order-product="'+escape(item.name.toLowerCase())+'"><summary>'+escape(item.name)+' · '+item.pack+' per carton</summary><div class="fields">'+number('Cartons','cartons'+i)+number('Loose units','loose'+i)+rate('Rate per carton ₹','rateCarton'+i,item.carton)+rate('Rate per loose unit ₹','rateLoose'+i,item.loose)+'</div></details>').join('')||'<p>Receive stock or create products first.</p>')+
+   '<button class="primary">Save order</button></form></details><section class="panel">'+select('Show orders for','areaFilter',[['','All areas'],...areas.map(area=>[area,area])])+'</section>';
+ const sales=data.entries.filter(entry=>entry.type==='Sale'&&entry.area&&(!selectedArea||entry.area===selectedArea));
+ const revenue=sales.reduce((sum,entry)=>sum+(entry.lines||[]).reduce((n,line)=>n+line.base,0),0);
+ const cost=sales.reduce((sum,entry)=>sum+(entry.lines||[]).reduce((n,line)=>n+(line.cost||0),0),0);
+ html+='<div class="grid"><div class="panel">Order sales before tax<strong class="metric">'+money(revenue)+'</strong></div><div class="panel">Gross margin before returns and expenses<strong class="metric">'+money(revenue-cost)+'</strong></div></div>';
+ const performance=new Map();
+ for(const entry of sales)for(const line of entry.lines||[]){
+   const totals=performance.get(line.name)||{units:0,sales:0};
+   totals.units+=line.quantity;totals.sales+=line.base;
+   performance.set(line.name,totals);
+ }
+ if(performance.size)html+='<details class="panel"><summary>Items by units sold</summary>'+table(['Item','Units sold','Sales before tax'],[...performance].sort((a,b)=>b[1].units-a[1].units).map(([name,row])=>[name,row.units,money(row.sales)]))+'</details>';
+ for(const order of rows){
+   const available=orderAvailability(order,data.products);
+   const pending=available.some(line=>line.pending>0);
+   const sent=order.dispatches.length>0;
+   const ready=available.some(line=>line.available>0);
+   const state=pending?(sent?'Partially sent':ready?'Ready to dispatch':'Waiting for stock'):order.dispatches.some(row=>!row.delivered)?'Out for delivery':'Delivered';
+   html+='<details class="panel"><summary><strong>'+escape(order.party)+'</strong> · '+escape(order.area)+' · '+state+'</summary><p>'+escape(order.date)+'</p>'+
+     table(['Product','Ordered','Sent','Still to send','Available now'],available.map(line=>[line.name,...[line.ordered,line.sent,line.pending,line.available].map(value=>showQty(value,line.pack))]));
+   for(const dispatch of order.dispatches){
+     html+='<div class="activity-row"><span>Bill '+dispatch.entryId+' · '+(dispatch.delivered?'Delivered '+escape(dispatch.deliveryDate):'Out for delivery')+'</span><div class="row"><button data-invoice="'+dispatch.entryId+'">View bill</button>'+
+       (dispatch.delivered?'':'<button data-deliver="'+escape(order.id)+'" data-entry="'+dispatch.entryId+'">Mark delivered</button>')+'</div></div>';
+   }
+   if(ready){
+     html+='<form data-action="dispatch"><h2>Dispatch and create bill</h2><p>Enter the quantities going out now. Amount received can be zero for credit.</p><input type="hidden" name="order" value="'+escape(order.id)+'">'+
+       available.map((line,i)=>line.available?'<fieldset><legend>'+escape(line.name)+'</legend><p>'+showQty(line.available,line.pack)+' available · '+money(line.cartonRate)+'/carton · '+money(line.looseRate)+'/unit</p><div class="fields">'+number('Send cartons','cartons'+i)+number('Send loose units','loose'+i)+'</div></fieldset>':'').join('')+
+       '<div class="fields">'+input('Amount received ₹','paid','number',rupees)+method()+'</div><button class="primary">Save dispatch and bill</button></form>';
+   }
+   html+='</details>';
+ }
+ return html+(rows.length?'':'<p class="panel">No orders for this area yet.</p>');
 }
 function activity(entries,showDetails=false){
  return entries.map(entry=>{
@@ -359,7 +413,7 @@ function stockTable(query){
 }
 function invoiceView(e){
  const shop=e.shop;
- return '<div class="panel"><h2>'+escape(shop.name)+'</h2><p>'+escape(shop.address)+'</p><p>GSTIN '+escape(shop.gstin||'—')+'</p><p>Demo only · Invoice '+e.id+' · '+escape(e.date)+'</p><p>Customer '+escape(e.party)+'</p>'+table(['Product','HSN','Cartons','Loose','Before GST','Demo GST','Total'],e.lines.map(l=>[l.name,l.hsn,l.boxes,l.units,money(l.base),money(l.tax),money(l.base+l.tax)]))+'<p>Total '+money(e.total)+' · Paid '+money(e.flow)+' · Due '+money(e.due)+'</p><div class="row"><button data-print>Print / save PDF</button><button data-page="Ledger">Back to ledger</button></div></div>';
+ return '<div class="panel"><h2>'+escape(shop.name)+'</h2><p>'+escape(shop.address)+'</p><p>GSTIN '+escape(shop.gstin||'—')+'</p><p>Demo only · Invoice '+e.id+' · '+escape(e.date)+'</p><p>Customer '+escape(e.party)+'</p>'+table(['Product','HSN','Cartons','Loose','Before GST','Demo GST','Total'],e.lines.map(l=>[l.name,l.hsn,l.boxes,l.units,money(l.base),money(l.tax),money(l.base+l.tax)]))+'<p>Total '+money(e.total)+' · Paid '+money(e.flow)+' · Due '+money(e.due)+'</p><div class="row"><button data-print>Print / save PDF</button><button data-page="'+(e.orderId?'Orders':'Ledger')+'">Back to '+(e.orderId?'orders':'ledger')+'</button></div></div>';
 }
 function calculateLine(f){
  const purchase=page==='Purchase', id=fstr(f,'product');
@@ -409,10 +463,15 @@ function updatePreviews(){
 document.addEventListener('input',e=>{
  const paymentForm=e.target.closest('form[data-action="post"]');
  if(paymentForm)Object.assign(paymentDraft,Object.fromEntries(new FormData(paymentForm)));
+ if(e.target.id==='order-search'){
+   const q=e.target.value.trim().toLowerCase();
+   for(const row of view.querySelectorAll('[data-order-product]'))row.hidden=!row.dataset.orderProduct.includes(q);
+ }
  if(e.target.id==='search')stockTable(e.target.value);
  if(e.target.closest('form[data-action="line"],form[data-action="post"]'))updatePreviews();
 });
 document.addEventListener('change',e=>{
+ if(e.target.name==='areaFilter'){selectedArea=e.target.value;render();return}
  if(e.target.name==='product'&&page==='Purchase'){
    const field=document.querySelector('#new-item');
    if(field)field.hidden=field.disabled=e.target.value!=='new';
@@ -443,6 +502,11 @@ document.addEventListener('click',async e=>{
    duePayment=balances().find(row=>row.side===b.dataset.dueSide&&row.party===b.dataset.dueParty);
    render();
    view.querySelector('form[data-action="due"] input')?.focus();
+   return;
+ }
+ if(b.dataset.deliver){
+   try{await send('delivered',{order:b.dataset.deliver,entry:b.dataset.entry});status.textContent='Delivery recorded.';render()}
+   catch(error){status.textContent=error.message}
    return;
  }
  if(b.dataset.page)go(b.dataset.page);
@@ -479,6 +543,7 @@ document.addEventListener('submit',async e=>{
      }
      const entryId=await send(action==='due'?'payment':action,fields);
      if(action==='due')duePayment=null;
+     if(action==='dispatch')invoice=data.entries.find(entry=>entry.id===entryId);
      if(action==='post'){
        if(page==='Sale')invoice=data.entries.find(entry=>entry.id===entryId);
        lines=[];billStep='party';paymentDraft={};

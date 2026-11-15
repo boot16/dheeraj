@@ -14,6 +14,8 @@ const whole = (value, label) => {
   return number;
 };
 
+export const areaKey = value => value.trim().toLowerCase().replace(/\s+/g,' ');
+
 export function orderAvailability(order, products) {
   return order.lines.map(line => {
     const stock = products.find(item => item.id === line.product)?.stock ?? 0;
@@ -24,6 +26,17 @@ export function orderAvailability(order, products) {
 
 export function applyOrder(state, actor, command, id, date) {
   const {action, fields} = command;
+  if (action === 'customer') {
+    const profile = {id, name:shortText(fields.name,'customer name'),
+      area:shortText(fields.area,'area').replace(/\s+/g,' '),
+      address:shortText(fields.address,'delivery address')};
+    const similar = state.customers.find(row => row.id !== id && areaKey(row.area) === areaKey(profile.area));
+    if(similar)profile.area=similar.area;
+    const index=state.customers.findIndex(row=>row.id===id);
+    if(index<0)state.customers.push(profile);
+    else state.customers[index]=profile;
+    return;
+  }
   if (action === 'order') {
     const lines = [];
     for (const [index, item] of state.products.entries()) {
@@ -39,8 +52,10 @@ export function applyOrder(state, actor, command, id, date) {
         sent:0, cartonRate:Math.round(cartonRate*100), looseRate:Math.round(looseRate*100)});
     }
     if (!lines.length || lines.length > 12) throw Error('Add quantities for one to twelve products.');
-    state.orders.push({id, party:shortText(fields.party,'party name'), area:shortText(fields.area,'area'),
-      date, lines, dispatches:[]});
+    const customer=state.customers.find(row=>row.id===fields.customer);
+    if(!customer)throw Error('Select a customer profile.');
+    state.orders.push({id,customerId:customer.id,party:customer.name,area:customer.area,
+      address:customer.address,date,lines,dispatches:[]});
     return;
   }
   const order = state.orders.find(row => row.id === fields.order);
@@ -69,7 +84,7 @@ export function applyOrder(state, actor, command, id, date) {
   const entryId=state.next;
   applyCommand(state,actor,{action:'post',page:'Sale',lines:dispatchLines,
     fields:{party:order.party,paid:fields.paid,method:fields.method}});
-  Object.assign(state.entries.at(-1),{orderId:order.id,area:order.area});
+  Object.assign(state.entries.at(-1),{orderId:order.id,area:order.area,...(order.customerId?{customerId:order.customerId,address:order.address}:{})});
   for(const quantity of quantities){
     order.lines.find(line=>line.product===quantity.product).sent+=quantity.quantity;
   }

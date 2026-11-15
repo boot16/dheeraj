@@ -58,6 +58,17 @@ service cloud.firestore {
           request.resource.data.party is string && request.resource.data.total is int &&
           request.resource.data.total >= 0 && request.resource.data.due is int;
       }
+      match /orders/{id} {
+        allow read: if owner();
+        allow create, update: if owner() && advancing() &&
+          request.resource.data.keys().hasOnly(['id','party','area','date','lines','dispatches']) &&
+          request.resource.data.id == id &&
+          request.resource.data.party is string && request.resource.data.party.size() <= 120 &&
+          request.resource.data.area is string && request.resource.data.area.size() <= 120 &&
+          request.resource.data.date is string &&
+          request.resource.data.lines is list && request.resource.data.lines.size() > 0 &&
+          request.resource.data.lines.size() <= 12 && request.resource.data.dispatches is list;
+      }
       match /commands/{id} {
         allow get: if owner();
         allow create: if owner() && advancing() &&

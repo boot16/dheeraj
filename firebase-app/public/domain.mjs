@@ -49,8 +49,8 @@ function balances(){
  const parties=new Map();
  for(const e of data.entries){
    if(!e.side)continue;
-   const k=e.side+':'+byParty(e.party);
-   if(!parties.has(k))parties.set(k,{side:e.side,party:e.party,balance:0});
+   const k=e.side+':'+(e.customerId?'id:'+e.customerId:'name:'+byParty(e.party));
+   if(!parties.has(k))parties.set(k,{side:e.side,party:e.party,customerId:e.customerId,balance:0});
    parties.get(k).balance+=e.due;
  }
  return [...parties.values()];
@@ -85,7 +85,9 @@ function post(f){
        p.stock-=l.quantity;
      }
    }
-   entry(s,page,{party,side:purchase?'Supplier':'Customer',total,due:total-paid,flow:purchase?-paid:paid,method:fstr(f,'method'),lines:lines.map(({newProduct,...line})=>line),shop:s.shop});
+   const customer=!purchase&&fstr(f,'customerId')?s.customers?.find(row=>row.id===fstr(f,'customerId')):null;
+   if(!purchase&&fstr(f,'customerId')&&!customer)throw Error('Customer profile not found.');
+   entry(s,page,{party:customer?.name||party,...(customer?{customerId:customer.id,area:customer.area,address:customer.address}:{}),side:purchase?'Supplier':'Customer',total,due:total-paid,flow:purchase?-paid:paid,method:fstr(f,'method'),lines:lines.map(({newProduct,...line})=>line),shop:s.shop});
  });
  
  lines=[];
@@ -95,22 +97,24 @@ function payment(f){
  if(!party||amount<=0)throw Error('Enter a party or description and a positive amount.');
  const expense=kind==='expense',opening=kind.startsWith('opening');
  const side=expense?null:['collection','openingCustomer'].includes(kind)?'Customer':'Supplier';
- const balance=balances().find(b=>b.side===side&&byParty(b.party)===byParty(party))?.balance||0;
+ const customerId=side==='Customer'?fstr(f,'customerId'):'';
+ const balance=balances().find(b=>b.side===side&&(customerId?b.customerId===customerId:!b.customerId&&byParty(b.party)===byParty(party)))?.balance||0;
  if(!opening&&!expense&&amount>balance)throw Error('Payment exceeds the outstanding balance for this party.');
  const names={collection:'Collection',supplier:'Supplier payment',expense:'Expense',openingCustomer:'Opening customer dues',openingSupplier:'Opening supplier dues'};
- save(s=>entry(s,names[kind],{party,side,total:amount,due:expense?0:opening?amount:-amount,flow:opening?0:kind==='collection'?amount:-amount,method:fstr(f,'method')}));
+ save(s=>entry(s,names[kind],{party,side,...(customerId?{customerId}:{}),total:amount,due:expense?0:opening?amount:-amount,flow:opening?0:kind==='collection'?amount:-amount,method:fstr(f,'method')}));
 }
 function adjust(f){
  const kind=fstr(f,'kind'),party=fstr(f,'party'),credit=paise(f,'credit');
  const p=product(data,fstr(f,'product'));
  if(!p||!party||quantity(f,p)<1)throw Error('Select a product and enter a quantity and party or reason.');
  const side=kind==='supplier'?'Supplier':['sellable','unsellable'].includes(kind)?'Customer':null;
- const balance=balances().find(b=>b.side===side&&byParty(b.party)===byParty(party))?.balance||0;
+ const customerId=side==='Customer'?fstr(f,'customerId'):'';
+ const balance=balances().find(b=>b.side===side&&(customerId?b.customerId===customerId:!b.customerId&&byParty(b.party)===byParty(party)))?.balance||0;
  if(credit&&(!side||credit>balance))throw Error('Credit must be within this party’s outstanding balance.');
  const movement=quantity(f,p)*(kind==='sellable'?1:kind==='unsellable'?0:-1);
  if(p.stock+movement<0)throw Error('Adjustment exceeds stock on hand.');
  const names={sellable:'Sellable customer return',unsellable:'Unsellable customer return',supplier:'Supplier return',damage:'Damage',expiry:'Expiry'};
- save(s=>{product(s,p.id).stock+=movement;entry(s,names[kind],{party,side,total:credit,due:-credit,lines:[{name:p.name,quantity:movement}]})});
+ save(s=>{product(s,p.id).stock+=movement;entry(s,names[kind],{party,side,...(customerId?{customerId}:{}),total:credit,due:-credit,lines:[{name:p.name,quantity:movement}]})});
 }
 
  const fields = command.fields;

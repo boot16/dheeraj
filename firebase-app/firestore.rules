@@ -1,8 +1,69 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if false;
+    function owner() {
+      return request.auth != null &&
+        request.auth.uid == get(/databases/$(database)/documents/wholesaleAccess/owner).data.uid;
+    }
+    function workspacePath() {
+      return /databases/$(database)/documents/wholesale/main;
+    }
+    function oldRevision() {
+      return exists(workspacePath()) ? get(workspacePath()).data.revision : 0;
+    }
+    function oldNext() {
+      return exists(workspacePath()) ? get(workspacePath()).data.next : 1;
+    }
+    function advancing() {
+      return getAfter(workspacePath()).data.revision == oldRevision() + 1;
+    }
+    function validProduct(p, id) {
+      return p.keys().hasOnly(['id','name','barcode','pack','carton','loose','hsn','tax','stock','cost']) &&
+        p.id == id && p.name is string && p.name.size() > 0 && p.name.size() <= 200 &&
+        p.barcode is string && p.barcode.size() <= 200 && p.hsn is string && p.hsn.size() <= 200 &&
+        p.pack is int && p.pack >= 1 && p.pack <= 10000 &&
+        p.stock is int && p.stock >= 0 &&
+        p.carton is int && p.carton >= 0 && p.loose is int && p.loose >= 0 &&
+        p.tax is number && p.tax >= 0 && p.tax <= 100 && p.cost is number && p.cost >= 0;
+    }
+    match /wholesale/main {
+      allow read: if owner();
+      allow create, update: if owner() && advancing() && validWorkspace();
+      function validWorkspace() {
+        let d = request.resource.data;
+        let receipt = /databases/$(database)/documents/wholesale/main/commands/$(d.lastCommand);
+        return d.keys().hasOnly(['revision','next','shop','lastCommand']) &&
+          d.revision is int && d.next is int && (d.next == oldNext() || d.next == oldNext() + 1) &&
+          d.shop.keys().hasOnly(['name','gstin','address']) &&
+          d.shop.name is string && d.shop.name.size() > 0 && d.shop.name.size() <= 200 &&
+          d.shop.gstin is string && d.shop.gstin.size() <= 200 &&
+          d.shop.address is string && d.shop.address.size() <= 200 &&
+          !exists(receipt) && existsAfter(receipt) &&
+          (d.next == oldNext()
+            ? getAfter(receipt).data.entryId == null
+            : getAfter(receipt).data.entryId == oldNext() &&
+              existsAfter(/databases/$(database)/documents/wholesale/main/entries/$(string(oldNext()))));
+      }
+      match /products/{id} {
+        allow read: if owner();
+        allow create, update: if owner() && advancing() && validProduct(request.resource.data,id);
+      }
+      match /entries/{id} {
+        allow read: if owner();
+        allow create: if owner() && advancing() &&
+          getAfter(workspacePath()).data.next == oldNext() + 1 &&
+          id == string(oldNext()) && request.resource.data.id == oldNext() &&
+          request.resource.data.actor == request.auth.uid &&
+          request.resource.data.type is string && request.resource.data.date is string &&
+          request.resource.data.party is string && request.resource.data.total is int &&
+          request.resource.data.total >= 0 && request.resource.data.due is int;
+      }
+      match /commands/{id} {
+        allow get: if owner();
+        allow create: if owner() && advancing() &&
+          getAfter(workspacePath()).data.lastCommand == id &&
+          request.resource.data.keys().hasOnly(['entryId']);
+      }
     }
   }
 }

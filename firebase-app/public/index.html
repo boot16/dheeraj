@@ -94,7 +94,7 @@ const product = (state,id) => state.products.find(p=>p.id===id);
 import {initializeApp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js';
 import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,signOut} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
 import {getFirestore,doc,collection,getDocFromServer,getDocsFromServer,runTransaction} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
-import {applyCommand} from './domain.mjs';
+import {applyCommand,packingDetails} from './domain.mjs';
 import {applyOrder,orderAvailability,areaKey} from './orders.mjs';
 const configResponse = await fetch('/__/firebase/init.json');
 if(!configResponse.ok){
@@ -231,10 +231,30 @@ function select(label,name,options){
  return '<label>'+label+'<select name="'+name+'">'+options.map(([v,t])=>'<option value="'+escape(v)+'">'+escape(t)+'</option>').join('')+'</select></label>';
 }
 function productFields(){
- return input('Product name','name','text',required)+input('Barcode','barcode','text','maxlength="64"')+
- input('Units per carton','pack','number','required min="1" max="10000" value="24"')+
- input('Carton sale price ₹','carton','number',rupees)+input('Loose sale price ₹','loose','number',rupees)+
- input('HSN','hsn','text','maxlength="8" pattern="[0-9]{4,8}"')+input('Sample GST %','tax','number','required min="0" max="100" step=".01" value="0"');
+ return input('Item name, flavour and size','name','text',required)+
+ input('Smallest stock unit (pouch, bottle, piece)','unit','text','required maxlength="30" value="piece"')+
+ input('MRP per smallest unit ₹','mrp','number',rupees)+
+ input('Selling rate per smallest unit ₹','loose','number',rupees)+
+ '<div style="grid-column:1/-1" data-packing><p>Add packs from smallest to largest. Example: strip = 10 pouches, carton = 12 strips.</p><div data-levels></div><button type="button" data-add-pack>Add packing level</button><input type="hidden" name="packing" value="[]"><input type="hidden" name="pack" value="1"><p data-conversion aria-live="polite">Individual units only</p></div>'+
+ input('Selling rate per outermost pack ₹','carton','number',rupees)+
+ input('Barcode (optional)','barcode','text','maxlength="64"')+
+ input('HSN','hsn','text','maxlength="8" pattern="[0-9]{4,8}"')+
+ input('GST %','tax','number','required min="0" max="100" step=".01" value="0"');
+}
+function syncPacking(form){
+ const holder=form.querySelector('[data-packing]');
+ if(!holder)return;
+ const levels=[...holder.querySelectorAll('[data-level]')].map(row=>({
+   name:row.querySelector('[data-pack-name]').value,
+   count:row.querySelector('[data-pack-count]').value,
+   quantity:row.querySelector('[data-pack-opening]').value
+ }));
+ form.elements.packing.value=JSON.stringify(levels);
+ try{
+   const details=packingDetails(Object.fromEntries(new FormData(form)));
+   form.elements.pack.value=details.pack;
+   holder.querySelector('[data-conversion]').textContent=details.packing.map(level=>'1 '+level.name+' = '+level.units+' '+details.unit).join(' · ')||'Individual units only';
+ }catch(error){holder.querySelector('[data-conversion]').textContent=error.message}
 }
 function qtyFields(){return input('Cartons','boxes','number',whole)+input('Loose units','units','number',whole)}
 const fstr=(f,k)=>String(f.get(k)||'').trim();
@@ -243,7 +263,8 @@ const paise=(f,k)=>Math.round(num(f,k)*100);
 function makeProduct(f){
  const name=fstr(f,'name');
  if(!name)throw Error('Enter a product name.');
- return {id:crypto.randomUUID(),name,barcode:fstr(f,'barcode'),pack:num(f,'pack'),carton:paise(f,'carton'),loose:paise(f,'loose'),hsn:fstr(f,'hsn'),tax:num(f,'tax'),stock:0,cost:0};
+ const details=f.has('packing')?packingDetails(Object.fromEntries(f)):null;
+ return {id:crypto.randomUUID(),name,...(details?{unit:details.unit,packing:details.packing,mrp:paise(f,'mrp')}:{}),barcode:fstr(f,'barcode'),pack:details?.pack??num(f,'pack'),carton:paise(f,'carton'),loose:paise(f,'loose'),hsn:fstr(f,'hsn'),tax:num(f,'tax'),stock:0,cost:0};
 }
 function addProduct(s,p){
  const clean = name=>name.toLowerCase().replace(/\s+/g,' ');
@@ -291,7 +312,7 @@ function render(){
  if(page==='Orders')html+=orderPage();
  if(page==='Customers')html+=customerPage();
  if(page==='Stock'){
-   html+='<div class="panel"><label>Search name or barcode<input id="search"></label><div id="stock"></div></div><form data-action="product"><h2>Create item and enter opening stock</h2><div class="fields">'+productFields()+qtyFields()+input('Opening cost per loose unit ₹','cost','number',rupees)+'</div><button class="primary">Save item</button></form>';
+   html+='<div class="panel"><label>Search name or barcode<input id="search"></label><div id="stock"></div></div><form data-action="product"><h2>Create item and enter opening stock</h2><div class="fields">'+productFields()+input('Opening loose units','openingBase','number',whole)+input('Opening cost per loose unit ₹','cost','number',rupees)+'</div><button class="primary">Save item</button></form>';
  }
  if(page==='Purchase'||page==='Sale'){
    const purchase=page==='Purchase';
@@ -427,6 +448,18 @@ function activity(entries,showDetails=false){
      (showDetails&&entry.type==='Sale'?'<small><button data-invoice="'+entry.id+'">View bill</button></small>':'')+'</div></div>';
  }).join('')||'<p class="empty">No transactions yet.</p>';
 }
+function displayStock(item){
+ if(!item.packing)return Math.floor(item.stock/item.pack)+' cartons + '+item.stock%item.pack+' loose';
+ let remaining=item.stock;
+ const parts=[];
+ for(const level of [...item.packing].reverse()){
+   const quantity=Math.floor(remaining/level.units);
+   if(quantity)parts.push(quantity+' '+level.name);
+   remaining%=level.units;
+ }
+ if(remaining||!parts.length)parts.push(remaining+' '+item.unit);
+ return parts.join(' + ');
+}
 function stockTable(query){
  const q=query.trim().toLowerCase();
  const matches=data.products.filter(p=>p.name.toLowerCase().includes(q)||p.barcode.toLowerCase().includes(q));
@@ -434,7 +467,7 @@ function stockTable(query){
    document.querySelector('#stock').innerHTML='<p class="empty">'+(q?'No matching products.':'No items yet. Create one below or receive stock from Purchase.')+'</p>';
    return;
  }
- document.querySelector('#stock').innerHTML=table(['Product','Cartons','Loose','Units/carton','Carton price','Loose price','Stock value'],matches.map(p=>[p.name,Math.floor(p.stock/p.pack),p.stock%p.pack,p.pack,money(p.carton),money(p.loose),money(Math.round(p.stock*p.cost))]));
+ document.querySelector('#stock').innerHTML=table(['Product','Stock','Packing','MRP / unit','Selling / unit','Stock value'],matches.map(p=>[p.name,displayStock(p),(p.packing||[]).map(level=>level.name+' = '+level.units+' '+p.unit).join(' · ')||p.pack+' units per outer pack',money(p.mrp||0),money(p.loose),money(Math.round(p.stock*p.cost))]));
 }
 function invoiceView(e){
  const shop=e.shop;
@@ -486,6 +519,8 @@ function updatePreviews(){
  }
 }
 document.addEventListener('input',e=>{
+ const packingForm=e.target.closest('form');
+ if(packingForm?.querySelector('[data-packing]'))syncPacking(packingForm);
  const paymentForm=e.target.closest('form[data-action="post"]');
  if(paymentForm)Object.assign(paymentDraft,Object.fromEntries(new FormData(paymentForm)));
  if(e.target.id==='order-search'){
@@ -511,6 +546,20 @@ document.addEventListener('change',e=>{
 document.addEventListener('click',async e=>{
  const b=e.target.closest('button');
  if(!b)return;
+ if(b.hasAttribute('data-add-pack')){
+   const holder=b.closest('[data-packing]'), levels=holder.querySelector('[data-levels]');
+   if(levels.children.length>=5){status.textContent='Use up to five packing levels.';return}
+   const row=document.createElement('fieldset');
+   row.dataset.level='';
+   row.innerHTML='<legend>Packing level '+(levels.children.length+1)+'</legend><div class="fields"><label>Pack name<input data-pack-name required maxlength="30" placeholder="Strip, box, carton"></label><label>How many of the unit below?<input data-pack-count required type="number" min="2" max="10000" step="1" value="10"></label><label>Opening packs at this level<input data-pack-opening required type="number" min="0" step="1" value="0"></label></div><button type="button" data-remove-pack>Remove this and higher levels</button>';
+   levels.append(row);return;
+ }
+ if(b.hasAttribute('data-remove-pack')){
+   const row=b.closest('[data-level]'), form=b.closest('form');
+   while(row.nextElementSibling)row.nextElementSibling.remove();
+   row.remove();syncPacking(form);return;
+ }
+
  if(b.hasAttribute('data-more')){
    const menu=document.querySelector('#more-menu');
    menu.hidden=!menu.hidden;
@@ -548,6 +597,7 @@ document.addEventListener('click',async e=>{
 });
 document.addEventListener('submit',async e=>{
  e.preventDefault();
+ syncPacking(e.target);
  const f=new FormData(e.target), action=e.target.dataset.action;
  try{
    if(e.target===login)return;

@@ -1,3 +1,24 @@
+export function packingDetails(fields) {
+ const unit=String(fields.unit||'piece').trim();
+ if(!unit||unit.length>30)throw Error('Enter a smallest stock unit.');
+ const levels=JSON.parse(fields.packing||'[]');
+ if(!Array.isArray(levels)||levels.length>5)throw Error('Use up to five packing levels.');
+ let multiplier=1,opening=Number(fields.openingBase||0);
+ if(!Number.isSafeInteger(opening)||opening<0)throw Error('Enter whole opening quantities.');
+ const names=new Set([unit.toLowerCase()]);
+ const packing=levels.map(level=>{
+   const name=String(level.name||'').trim(), count=Number(level.count), quantity=Number(level.quantity||0);
+   if(!name||name.length>30||names.has(name.toLowerCase()))throw Error('Use a distinct name for each packing level.');
+   if(!Number.isSafeInteger(count)||count<2||count>10000||!Number.isSafeInteger(quantity)||quantity<0)throw Error('Enter whole pack sizes and opening quantities.');
+   names.add(name.toLowerCase());
+   multiplier*=count;
+   opening+=quantity*multiplier;
+   if(!Number.isSafeInteger(multiplier)||multiplier>100000000||!Number.isSafeInteger(opening))throw Error('Packing quantity is too large.');
+   return {name,count,units:multiplier};
+ });
+ return {unit,packing,pack:multiplier,opening};
+}
+
 
 export function applyCommand(data, actor, command) {
  let page = command.page;
@@ -35,7 +56,8 @@ const paise=(f,k)=>Math.round(num(f,k)*100);
 function makeProduct(f){
  const name=fstr(f,'name');
  if(!name)throw Error('Enter a product name.');
- return {id:crypto.randomUUID(),name,barcode:fstr(f,'barcode'),pack:num(f,'pack'),carton:paise(f,'carton'),loose:paise(f,'loose'),hsn:fstr(f,'hsn'),tax:num(f,'tax'),stock:0,cost:0};
+ const details=f.has('packing')?packingDetails(Object.fromEntries(f)):null;
+ return {id:crypto.randomUUID(),name,...(details?{unit:details.unit,packing:details.packing,mrp:paise(f,'mrp')}:{}),barcode:fstr(f,'barcode'),pack:details?.pack??num(f,'pack'),carton:paise(f,'carton'),loose:paise(f,'loose'),hsn:fstr(f,'hsn'),tax:num(f,'tax'),stock:0,cost:0};
 }
 function addProduct(s,p){
  const clean = name=>name.toLowerCase().replace(/\s+/g,' ');
@@ -66,7 +88,7 @@ function addLine(f){
  const count=quantity(f,p)+free;
  if(count<1)throw Error('Enter at least one unit.');
  const base=purchase?paise(f,'cost'):num(f,'boxes')*(f.has('cartonRate')?num(f,'cartonRate'):p.carton)+num(f,'units')*(f.has('looseRate')?num(f,'looseRate'):p.loose);
- lines.push({id:p.id,name:p.name,hsn:p.hsn,boxes:num(f,'boxes'),units:num(f,'units'),quantity:count,base,tax:Math.round(base*p.tax/100),cost:Math.round(count*p.cost),newProduct:fresh});
+ lines.push({id:p.id,name:p.name,hsn:p.hsn,boxes:num(f,'boxes'),units:num(f,'units'),quantity:count,base,tax:Math.round(base*p.tax/100),cost:Math.round(count*p.cost),packing:p.packing||[],unit:p.unit||'piece',pack:p.pack,newProduct:fresh});
 }
 function post(f){
  const purchase=page==='Purchase';
@@ -122,9 +144,9 @@ function adjust(f){
  const f = form(fields);
  switch (command.action) {
    case 'product': {
-     if (fields.pack === undefined) throw Error('Enter units per carton.');
+     if (fields.pack === undefined && fields.packing === undefined) throw Error('Enter units per carton.');
      const p = makeProduct(f);
-     p.stock = quantity(f,p);
+     p.stock = f.has('packing')?packingDetails(Object.fromEntries(f)).opening:quantity(f,p);
      p.cost = paise(f,'cost');
      addProduct(data,p);
      break;
@@ -133,7 +155,7 @@ function adjust(f){
      if (!['Sale','Purchase'].includes(page) || !Array.isArray(command.lines) || command.lines.length < 1 || command.lines.length > 12) throw Error('Enter one to twelve lines per bill.');
      for (const line of command.lines) {
        validate(line);
-       if (line.product === 'new' && (page !== 'Purchase' || line.pack === undefined)) throw Error('Invalid new product.');
+       if (line.product === 'new' && (page !== 'Purchase' || (line.pack === undefined && line.packing === undefined))) throw Error('Invalid new product.');
        addLine(form(line));
      }
      post(f);

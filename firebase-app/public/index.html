@@ -73,6 +73,23 @@ fieldset{min-inline-size:0}.cart-row:last-child{border-bottom:0}
 [hidden]{display:none!important}.bill-steps li{min-width:0;overflow-wrap:anywhere}
 form[data-action=post] fieldset{padding:12px}
 @media(max-width:680px){.workbench .row button{flex:1}.activity-row{align-items:flex-start}}
+
+.item-section{grid-column:1/-1;border-bottom:1px solid var(--line);padding:12px 0 22px}
+.item-section h2{font-size:19px;margin-bottom:12px}
+.pack-grid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;align-items:end}
+.field-label{display:block;font-size:14px;margin-bottom:12px}
+.price-grid{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:12px;align-items:center}
+.price-grid>strong{font-size:13px;color:#496358}
+.price-grid label{font-size:0}
+.price-grid label input{font-size:16px}
+.outer-price{display:contents}
+.item-section fieldset{padding:12px}
+@media(max-width:680px){
+ .pack-grid{grid-template-columns:1.3fr 1fr 1fr;gap:8px}
+ .pack-grid label{grid-column:auto!important}
+ .price-grid{gap:8px;grid-template-columns:1fr 1fr 1fr}
+ .price-grid input{padding:9px 5px}
+}
 </style>
 <header><span class="brand-mark" aria-hidden="true">DW</span><div><strong>Dheeraj Wholesale</strong><small>Inventory &amp; accounts</small></div></header>
 <nav aria-label="Main navigation"></nav><main><div id="status" role="status"></div><section id="view"></section></main>
@@ -232,15 +249,17 @@ function select(label,name,options){
  return '<label>'+label+'<select name="'+name+'">'+options.map(([v,t])=>'<option value="'+escape(v)+'">'+escape(t)+'</option>').join('')+'</select></label>';
 }
 function productFields(){
- return input('Item name, flavour and size','name','text',required)+
- input('Smallest stock unit (pouch, bottle, piece)','unit','text','required maxlength="30" value="piece"')+
- input('MRP per smallest unit ₹','mrp','number',rupees)+
- input('Selling rate per smallest unit ₹','loose','number',rupees)+
- '<div style="grid-column:1/-1" data-packing><p>Add packs from smallest to largest. Example: strip = 10 pouches, carton = 12 strips.</p><div data-levels></div><button type="button" data-add-pack>Add packing level</button><input type="hidden" name="packing" value="[]"><input type="hidden" name="pack" value="1"><p data-conversion aria-live="polite">Individual units only</p></div>'+
- input('Selling rate per outermost pack ₹','carton','number',rupees)+
- input('Barcode (optional)','barcode','text','maxlength="64"')+
+ return '<section class="item-section"><h2>Item details</h2><div class="fields">'+
+ input('Item name, flavour and size','name','text',required)+
+ input('Unit (pouch, bottle, piece)','unit','text','required maxlength="30" placeholder="Pouch"')+
+ input('Barcode (optional)','barcode','text','maxlength="64"')+'</div></section>'+
+ '<section class="item-section" data-packing><h2>Packing</h2><p>Sell this item in packs? Add the pack sizes here.</p><div data-levels></div><button type="button" data-add-pack>Add a pack</button><input type="hidden" name="packing" value="[]"><input type="hidden" name="pack" value="1"><p data-conversion aria-live="polite">Choose the item unit above.</p></section>'+
+ '<section class="item-section"><h2>Prices</h2><div class="price-grid"><strong>Selling unit</strong><strong>MRP ₹</strong><strong>Selling price ₹</strong><span data-base-price-label>One unit</span>'+
+ input('MRP per unit ₹','mrp','number',rupees)+input('Selling price per unit ₹','loose','number',rupees)+
+ '<div data-outer-price class="outer-price" hidden><span data-outer-price-label>One pack</span><span class="muted">—</span>'+input('Selling price per pack ₹','carton','number',rupees)+'</div></div></section>'+
+ '<section class="item-section"><h2>Tax details</h2><div class="fields">'+
  input('HSN','hsn','text','maxlength="8" pattern="[0-9]{4,8}"')+
- input('GST %','tax','number','required min="0" max="100" step=".01" value="0"');
+ input('GST %','tax','number','required min="0" max="100" step=".01" value="0"')+'</div></section>';
 }
 function syncPacking(form){
  const holder=form.querySelector('[data-packing]');
@@ -251,8 +270,26 @@ function syncPacking(form){
    quantity:row.querySelector('[data-pack-opening]').value
  }));
  form.elements.packing.value=JSON.stringify(levels);
+ let lowerLabel=form.elements.unit.value.trim()||'item unit';
+ for(const row of holder.querySelectorAll('[data-level]')){
+   row.querySelector('[data-lower-unit]').textContent=lowerLabel;
+   lowerLabel=row.querySelector('[data-pack-name]').value.trim()||'previous pack';
+ }
  try{
    const details=packingDetails(Object.fromEntries(new FormData(form)));
+   let lower=details.unit;
+   for(const row of holder.querySelectorAll('[data-level]')){
+     row.querySelector('[data-lower-unit]').textContent=lower;
+     lower=row.querySelector('[data-pack-name]').value||'previous pack';
+   }
+   form.querySelector('[data-base-price-label]').textContent='One '+details.unit;
+   const outer=form.querySelector('[data-outer-price]');
+   outer.hidden=!details.packing.length;
+   if(details.packing.length)form.querySelector('[data-outer-price-label]').textContent='One '+details.packing.at(-1).name;
+   else form.elements.carton.value='0';
+   for(const [name,label] of [['mrp','MRP per '+details.unit+' ₹'],['loose','Selling price per '+details.unit+' ₹'],['carton','Selling price per '+lower+' ₹']]){
+     form.elements[name].setAttribute('aria-label',label);
+   }
    form.elements.pack.value=details.pack;
    holder.querySelector('[data-conversion]').textContent=details.packing.map(level=>'1 '+level.name+' = '+level.units+' '+details.unit).join(' · ')||'Individual units only';
  }catch(error){holder.querySelector('[data-conversion]').textContent=error.message}
@@ -316,7 +353,7 @@ function render(){
    if(itemMode==='list'){
      html+='<div class="row"><button class="primary" data-new-item>Add item</button></div><div class="panel"><label>Search item name or barcode<input id="search" type="search"></label><div id="stock"></div></div>';
    }else if(itemMode==='create'){
-     html+='<button type="button" data-item-back>Back to inventory</button><form data-action="product"><h2>Add item</h2><p>Define the product and its prices. Stock starts at zero.</p><div class="fields">'+productFields()+'</div><section id="item-review" class="panel" hidden aria-live="polite"></section><div class="row"><button type="button" data-review-item>Review item</button><button class="primary">Save item</button></div></form>';
+     html+='<button type="button" data-item-back>Back to inventory</button><form data-action="product"><h2>Add item</h2><p>Enter item details, packing, prices and tax. You can receive stock after saving.</p><div class="fields">'+productFields()+'</div><section id="item-review" class="panel" hidden aria-live="polite"></section><div class="row"><button type="button" data-item-back>Cancel</button><button type="button" data-review-item>Review item</button><button class="primary">Save item</button></div></form>';
    }else{
      const item=data.products.find(row=>row.id===savedItemId);
      html+='<button data-item-back>Back to inventory</button><section class="panel"><h2>'+escape(item.name)+'</h2>'+
@@ -585,8 +622,8 @@ document.addEventListener('click',async e=>{
    if(levels.children.length>=5){status.textContent='Use up to five packing levels.';return}
    const row=document.createElement('fieldset');
    row.dataset.level='';
-   row.innerHTML='<legend>Packing level '+(levels.children.length+1)+'</legend><div class="fields"><label>Pack name<input data-pack-name required maxlength="30" placeholder="Strip, box, carton"></label><label>How many of the unit below?<input data-pack-count required type="number" min="2" max="10000" step="1" value="10"></label><label '+(b.closest('[data-action=product]')?'hidden':'')+'>Opening packs at this level<input data-pack-opening required type="number" min="0" step="1" value="0"></label></div><button type="button" data-remove-pack>Remove this and higher levels</button>';
-   levels.append(row);return;
+   row.innerHTML='<div class="pack-grid"><label>Pack name<input data-pack-name required maxlength="30" placeholder="Box"></label><label>Contains<input data-pack-count required type="number" min="2" max="10000" step="1" placeholder="90"></label><div><span class="field-label">Unit</span><strong data-lower-unit></strong></div></div><label '+(b.closest('[data-action=product]')?'hidden':'')+'>Opening packs<input data-pack-opening required type="number" min="0" step="1" value="0"></label><button type="button" data-remove-pack>Remove this pack and packs above it</button>';
+   levels.append(row);syncPacking(b.closest('form'));row.querySelector('input').focus();return;
  }
  if(b.hasAttribute('data-remove-pack')){
    itemReview=null;const review=view.querySelector('#item-review');if(review)review.hidden=true;

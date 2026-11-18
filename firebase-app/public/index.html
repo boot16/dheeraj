@@ -83,6 +83,7 @@ let revision;
 let saving = false;
 let page = 'Overview', lines = [], invoice = null;
 let duePayment=null;
+let itemMode='list', savedItemId='', itemReview=null;
 let billStep = 'party', paymentDraft = {};
 const pages = ['Overview','Orders','Customers','Stock','Purchase','Sale','Payments','Returns','Ledger','Settings'];
 const view = document.querySelector('#view');
@@ -214,7 +215,7 @@ const primaryPages=['Overview','Orders','Stock','Ledger'];
 function go(name){
  if(name===page&&!invoice)return;
  if(name!==page&&lines.length&&!confirm('Leave this page and discard the unsaved bill?'))return;
- page=name;editCustomerId='';duePayment=null;lines=[];invoice=null;billStep='party';paymentDraft={};status.textContent='';render();
+ page=name;itemMode='list';savedItemId='';itemReview=null;editCustomerId='';duePayment=null;lines=[];invoice=null;billStep='party';paymentDraft={};status.textContent='';render();
  window.scrollTo(0,0);
 }
 function table(headers,rows){
@@ -312,7 +313,16 @@ function render(){
  if(page==='Orders')html+=orderPage();
  if(page==='Customers')html+=customerPage();
  if(page==='Stock'){
-   html+='<div class="panel"><label>Search name or barcode<input id="search"></label><div id="stock"></div></div><form data-action="product"><h2>Create item and enter opening stock</h2><div class="fields">'+productFields()+input('Opening loose units','openingBase','number',whole)+input('Opening cost per loose unit ₹','cost','number',rupees)+'</div><button class="primary">Save item</button></form>';
+   if(itemMode==='list'){
+     html+='<div class="row"><button class="primary" data-new-item>Add item</button></div><div class="panel"><label>Search item name or barcode<input id="search" type="search"></label><div id="stock"></div></div>';
+   }else if(itemMode==='create'){
+     html+='<button type="button" data-item-back>Back to inventory</button><form data-action="product"><h2>Add item</h2><p>Define the product and its prices. Stock starts at zero.</p><div class="fields">'+productFields()+'</div><section id="item-review" class="panel" hidden aria-live="polite"></section><div class="row"><button type="button" data-review-item>Review item</button><button class="primary">Save item</button></div></form>';
+   }else{
+     const item=data.products.find(row=>row.id===savedItemId);
+     html+='<button data-item-back>Back to inventory</button><section class="panel"><h2>'+escape(item.name)+'</h2>'+
+       table(['Property','Saved value'],[['Stock unit',item.unit||'piece'],['Packing',(item.packing||[]).map(level=>'1 '+level.name+' = '+level.units+' '+item.unit).join(' · ')||'Individual units'],['MRP per '+(item.unit||'unit'),money(item.mrp||0)],['Selling rate per '+(item.unit||'unit'),money(item.loose)],['Outermost pack selling rate',money(item.carton)],['GST',item.tax+'%'],['HSN',item.hsn||'—'],['Barcode',item.barcode||'—'],['Current stock',displayStock(item)]])+'</section>';
+   }
+
  }
  if(page==='Purchase'||page==='Sale'){
    const purchase=page==='Purchase';
@@ -372,7 +382,7 @@ function render(){
    html+='<form data-action="shop"><h2>Shop profile</h2><div class="fields">'+input('Business name','name','text',required+' value="'+escape(data.shop.name)+'"')+input('GSTIN','gstin','text','maxlength="15" value="'+escape(data.shop.gstin)+'"')+input('Address','address','text','maxlength="200" value="'+escape(data.shop.address)+'"')+'</div><button class="primary">Save profile</button></form>';
  }
  view.innerHTML=html;
- if(page==='Stock')stockTable('');
+ if(page==='Stock'&&itemMode==='list')stockTable('');
  if(page==='Orders')view.querySelector('[name=areaFilter]').value=selectedArea;
  const customerPicker=view.querySelector('[data-action=party] [name=customerId]');
  if(customerPicker)customerPicker.value=paymentDraft.customerId||'';
@@ -519,6 +529,7 @@ function updatePreviews(){
  }
 }
 document.addEventListener('input',e=>{
+ if(e.target.closest('form[data-action=product]')){itemReview=null;const review=view.querySelector('#item-review');if(review)review.hidden=true}
  const packingForm=e.target.closest('form');
  if(packingForm?.querySelector('[data-packing]'))syncPacking(packingForm);
  const paymentForm=e.target.closest('form[data-action="post"]');
@@ -546,15 +557,39 @@ document.addEventListener('change',e=>{
 document.addEventListener('click',async e=>{
  const b=e.target.closest('button');
  if(!b)return;
+ if(saving){status.textContent='Saving. Please wait.';return}
+ if(b.hasAttribute('data-new-item')){itemMode='create';itemReview=null;render();view.querySelector('[name=name]').focus();return}
+ if(b.hasAttribute('data-item-back')){
+   if(itemMode==='create'&&!confirm('Discard this unsaved item?'))return;
+   itemMode='list';itemReview=null;render();return;
+ }
+ if(b.hasAttribute('data-review-item')){
+   const form=b.closest('form');
+   if(!form.reportValidity())return;
+   syncPacking(form);
+   try{
+     const f=new FormData(form), item=makeProduct(f);
+     addProduct({products:[...data.products]},item);
+     itemReview=JSON.stringify(Object.fromEntries(f));
+     const review=view.querySelector('#item-review');
+     review.hidden=false;
+     review.innerHTML='<h2>Check this item</h2>'+table(['Property','Value'],[['Name',item.name],['Stock unit',item.unit],['Packing',(item.packing||[]).map(level=>'1 '+level.name+' = '+level.units+' '+item.unit).join(' · ')||'Individual units'],['MRP per '+item.unit,money(item.mrp)],['Selling per '+item.unit,money(item.loose)],['Outermost pack rate',money(item.carton)],['GST',item.tax+'%'],['HSN',item.hsn||'—']]);
+     review.scrollIntoView({block:'center'});
+   }catch(error){status.textContent=error.message}
+   return;
+ }
+
  if(b.hasAttribute('data-add-pack')){
+   itemReview=null;const review=view.querySelector('#item-review');if(review)review.hidden=true;
    const holder=b.closest('[data-packing]'), levels=holder.querySelector('[data-levels]');
    if(levels.children.length>=5){status.textContent='Use up to five packing levels.';return}
    const row=document.createElement('fieldset');
    row.dataset.level='';
-   row.innerHTML='<legend>Packing level '+(levels.children.length+1)+'</legend><div class="fields"><label>Pack name<input data-pack-name required maxlength="30" placeholder="Strip, box, carton"></label><label>How many of the unit below?<input data-pack-count required type="number" min="2" max="10000" step="1" value="10"></label><label>Opening packs at this level<input data-pack-opening required type="number" min="0" step="1" value="0"></label></div><button type="button" data-remove-pack>Remove this and higher levels</button>';
+   row.innerHTML='<legend>Packing level '+(levels.children.length+1)+'</legend><div class="fields"><label>Pack name<input data-pack-name required maxlength="30" placeholder="Strip, box, carton"></label><label>How many of the unit below?<input data-pack-count required type="number" min="2" max="10000" step="1" value="10"></label><label '+(b.closest('[data-action=product]')?'hidden':'')+'>Opening packs at this level<input data-pack-opening required type="number" min="0" step="1" value="0"></label></div><button type="button" data-remove-pack>Remove this and higher levels</button>';
    levels.append(row);return;
  }
  if(b.hasAttribute('data-remove-pack')){
+   itemReview=null;const review=view.querySelector('#item-review');if(review)review.hidden=true;
    const row=b.closest('[data-level]'), form=b.closest('form');
    while(row.nextElementSibling)row.nextElementSibling.remove();
    row.remove();syncPacking(form);return;
@@ -567,6 +602,7 @@ document.addEventListener('click',async e=>{
    return;
  }
  if(b.hasAttribute('data-logout')&&!saving){await signOut(auth);return}
+ if(saving){status.textContent='Saving. Please wait.';return}
  if(saving&&(b.dataset.page||b.dataset.step||b.dataset.editCustomer||b.dataset.dueKey||b.dataset.remove!==undefined||b.dataset.invoice)){status.textContent='Saving. Please wait.';return}
  if(b.dataset.step){
    const form=view.querySelector('form[data-action="post"]');
@@ -609,6 +645,16 @@ document.addEventListener('submit',async e=>{
      paymentDraft.party=party;
      if(customer)paymentDraft.customerId=customer.id;
      billStep='products';status.textContent='';render();return;
+   }
+   if(action==='product'){
+     if(itemReview!==JSON.stringify(Object.fromEntries(f)))throw Error('Review the item details before saving.');
+     const previousIds=new Set(data.products.map(item=>item.id));
+     await send('product',Object.fromEntries(f));
+     const created=data.products.find(item=>!previousIds.has(item.id));
+     if(created){savedItemId=created.id;itemMode='details'}
+     itemReview=null;
+     status.textContent='Item saved. Check its details below.';
+     render();return;
    }
    if(action==='line')addLine(f);
    else{

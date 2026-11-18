@@ -18,7 +18,8 @@ service cloud.firestore {
       return getAfter(workspacePath()).data.revision == oldRevision() + 1;
     }
     function validProduct(p, id) {
-      return p.keys().hasOnly(['id','name','barcode','pack','carton','loose','hsn','tax','stock','cost']) &&
+      return p.keys().hasOnly(['id','name','barcode','pack','carton','loose','hsn','tax','stock','cost','unit','packing','mrp']) &&
+        (!('packing' in p) || (p.packing is list && p.packing.size() <= 5 && p.unit is string && p.unit.size() > 0 && p.unit.size() <= 30 && p.mrp is int && p.mrp >= 0)) &&
         p.id == id && p.name is string && p.name.size() > 0 && p.name.size() <= 200 &&
         p.barcode is string && p.barcode.size() <= 200 && p.hsn is string && p.hsn.size() <= 200 &&
         p.pack is int && p.pack >= 1 && p.pack <= 10000 &&

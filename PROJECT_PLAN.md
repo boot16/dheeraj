@@ -200,3 +200,7 @@ Model and prototype the dedicated item form using three concrete products: indiv
 ## Implementation checkpoint — 18 November 2026
 
 Started dedicated Inventory → Add item → Review → Save → saved details flow. Item creation uses zero opening stock and is separate from the inventory list. Duplicate-name/barcode validation runs during review; edits invalidate the review. Local syntax and three rendering checks passed. Browser, emulator and live persistence verification pending. The packing editor and naming still require owner review. Separate opening-stock action, default prices by each pack, intermediate-unit transaction entry and item editing remain pending. This checkpoint does not complete the item milestone.
+
+### Item presentation checkpoint
+
+Implemented Item details → Packing → Prices → Tax details → Review/Save. Packing rows show Pack name, Contains and the preceding unit. Prices show selling unit, MRP and selling price in aligned columns. Unit labels follow the selected unit/pack. Optional outer-pack price is hidden for individual-only items. Existing data fields remain compatible. Syntax and section/field checks passed. Browser rendering and live save remain unverified. Intermediate pack pricing, separate opening stock and all-unit transaction integration remain pending.

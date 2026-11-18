@@ -196,3 +196,7 @@ Model and prototype the dedicated item form using three concrete products: indiv
 ### Change log
 
 - 18 Nov 2026 — Consolidated owner decisions and proposed end-to-end implementation. Corrected the earlier assumption that the existing item UI and arbitrary bill/packing limits were approved requirements.
+
+## Implementation checkpoint — 18 November 2026
+
+Started dedicated Inventory → Add item → Review → Save → saved details flow. Item creation uses zero opening stock and is separate from the inventory list. Duplicate-name/barcode validation runs during review; edits invalidate the review. Local syntax and three rendering checks passed. Browser, emulator and live persistence verification pending. The packing editor and naming still require owner review. Separate opening-stock action, default prices by each pack, intermediate-unit transaction entry and item editing remain pending. This checkpoint does not complete the item milestone.

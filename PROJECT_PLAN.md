@@ -273,3 +273,43 @@ A working Items list and simple item form with name/unit/MRP/default selling rat
 ### Decisions still needed at the affected stage
 
 Tax-inclusive/exclusive pricing and rounding; expiry/batch and containers; credit/advance allocation policy; failed delivery/cancelled remainder; return settlement; closing correction; signature type. Do not silently decide these from a UI example.
+
+## Integrated rebuild checkpoint — 22 November 2026
+
+Implementation lives at firebase-app/public/erp/ and opens at /erp/. It uses the same Firebase owner identity but a separate erp/main workspace. The original wholesale/main records and old application remain available. No migration or deletion was performed.
+
+### Implemented for owner testing
+
+- Item create/edit; base unit and optional packing rows; explicit selling rates per packing unit; separate opening-stock command and movement history.
+- Customer and supplier identities; customer area/address; agreed item-unit prices; party ledger and outstanding-bill allocation.
+- Traditional purchase, direct sale and order entry tables with quantities in any defined unit, purchase free quantity, discounts and live totals.
+- Orders, partial dispatch and generated sales invoice; delivery confirmation; dispatch can select another unit and review its converted rate.
+- Customer/supplier returns referencing original bill lines; sellable/unsellable handling; credit or immediate refund settlement.
+- Expenses; dated area visit tasks; saved cash closing; day totals, source transactions and provisional area/item gross margin.
+- Printable test invoice with internal sequential reference, optional small logo/signature image; JSON export.
+- Shared domain commands produce affected records and explicit stock movement entries. Firestore writes stock, bills, money, order changes and retry receipt atomically.
+
+### Verification completed
+
+- Seven domain scenarios passed, including a 28-day synthetic month reconciling movement quantities, party balances, payment allocations and closing cash.
+- DOM interaction scenario passed item/party creation, purchase entry, ordering, dispatch, delivery, collection and phone row editor. These tests mock persistence and are not visual browser QA.
+- Firestore emulator compiled the combined rules and passed real writes for the connected workflow. Unauthorized access, deletions, invoice edits and invalid negative stock were rejected.
+- A 50-line purchase passed actual emulator rule evaluation with 50 balance updates, 50 movement records and one bill.
+- Real Firebase deployment and actual iPhone Safari rendering remain unverified.
+
+### Temporary implementation defaults requiring owner review
+
+- Rates before GST, moving weighted-average item cost, oldest-bill-first allocation unless a bill is selected.
+- Up to 50 rows per document; repeated item rows allow mixed packing units; up to five optional pack levels.
+- Closing blocks money/stock postings on that business date. Reopening is pending.
+- Supplier return credit currently settles immediately; pending supplier credits are unfinished.
+- Dispatch in another unit initially converts the agreed order rate proportionally; the owner can change that dispatch rate before posting.
+- Separate empty workspace chosen to avoid unreviewed migration of the existing records.
+
+### Still pending
+
+Full accounting/general ledger, corrections and linked reversals, advances, order cancellation/failed delivery, supplier-credit-pending workflow, batch/expiry and containers, complete return/expense-adjusted area profitability, final GST invoice/numbering requirements, validated restore and legacy migration.
+
+Reads currently load the rebuild workspace, and writes conservatively check loaded record versions plus a shared generation. This is safe against stale screens in tested workflows but needs scoped query/pagination work as records grow. Rules enforce ownership, operation linkage, basic shape, nonnegative stock and immutable financial documents; the owner's browser still executes the detailed posting arithmetic on Spark.
+
+See firebase-app/public/erp/README.md for exact deployment and repeatable checks. This checkpoint records a connected test release, not production accounting approval.

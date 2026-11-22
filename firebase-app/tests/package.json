@@ -1,0 +1,14 @@
+{
+  "name": "dheeraj-erp-checks",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test erp-core.test.mjs && node erp-ui.test.mjs",
+    "test:rules": "node erp-firestore.test.mjs"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "6.0.0",
+    "firebase": "13.4.0",
+    "jsdom": "31.0.1"
+  }
+}

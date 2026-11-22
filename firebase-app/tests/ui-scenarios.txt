@@ -1,0 +1,66 @@
+let sequence=0;
+save=async(command,businessDate=date())=>{
+ const result=apply(state,command,{id:'ui-'+(++sequence),date:businessDate,actor:'owner'});
+ state=result.state;return result.result;
+};
+const wait=()=>new Promise(resolve=>setTimeout(resolve,0));
+const check=(value,label)=>{if(!value)throw Error(label)};
+const click=async(selector)=>{const target=document.querySelector(selector);check(target,'Missing '+selector);target.click();await wait()};
+const fill=(name,value,form=view.querySelector('form'))=>{check(form.elements[name],'Missing field '+name);form.elements[name].value=value};
+const submit=async()=>{view.querySelector('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));await wait()};
+render();
+await click('[data-page=Items]');
+await click('[data-action=newItem]');
+fill('name','Cola');fill('unit','bottle');fill('mrp','20');fill('price','18');fill('tax','5');
+await click('[data-action=pack]');
+const packName=view.querySelector('[data-pack][data-field=name]');packName.value='carton';packName.dispatchEvent(new Event('input',{bubbles:true}));
+const contains=view.querySelector('[data-pack][data-field=contains]');contains.value='24';contains.dispatchEvent(new Event('input',{bubbles:true}));
+const packPrice=view.querySelector('[data-pack][data-field=price]');packPrice.value='400';packPrice.dispatchEvent(new Event('input',{bubbles:true}));
+await submit();
+check(state.items[0]?.packs[0].factor===24,'Item pack save failed');
+await click('[data-page=Parties]');
+await click('[data-action=newParty]');
+fill('name','Supplier');fill('role','Supplier');fill('address','Road');await submit();
+await click('[data-action=newParty]');
+fill('name','Retailer');fill('role','Customer');fill('address','Street');fill('area','West');await submit();
+const supplier=state.parties.find(p=>p.role==='Supplier').id,customer=state.parties.find(p=>p.role==='Customer').id,item=state.items[0].id;
+await click('[data-page=Purchases]');
+await click('[data-action=newPurchase]');
+fill('partyId',supplier);fill('reference','P1');
+let select=view.querySelector('[data-row][data-field=itemId]');
+select.value=item;select.dispatchEvent(new Event('change',{bubbles:true}));
+select=view.querySelector('[data-row][data-field=unit]');select.value='carton';select.dispatchEvent(new Event('change',{bubbles:true}));
+for(const [field,value]of [['quantity','7'],['rate','200']]){
+ const el=view.querySelector('[data-row][data-field='+field+']');el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));
+}
+await submit();
+check(state.items[0].stock===168,'Purchase stock incorrect');
+await click('[data-page=Orders]');
+await click('[data-action=newOrder]');
+fill('partyId',customer);
+select=view.querySelector('[data-row][data-field=itemId]');select.value=item;select.dispatchEvent(new Event('change',{bubbles:true}));
+select=view.querySelector('[data-row][data-field=unit]');select.value='carton';select.dispatchEvent(new Event('change',{bubbles:true}));
+for(const [field,value]of [['quantity','10'],['rate','400']]){
+ const el=view.querySelector('[data-row][data-field='+field+']');el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));
+}
+await submit();
+check(state.orders.length===1,'Order not saved');
+await click('[data-action=order]');
+fill('send-0','7');await submit();
+check(state.items[0].stock===0,'Dispatch did not deduct');
+check(view.textContent.includes('Out for delivery')||view.querySelector('[data-action=delivered]'),'Delivery action missing');
+await click('[data-action=delivered]');
+check(state.documents.find(d=>d.type==='sale').delivery==='Delivered','Delivery confirmation failed');
+await click('[data-action=ledger]');
+fill('amount','2940');await submit();
+check(outstanding(state,customer)===0,'Collection failed');
+await click('[data-page=Sales]');
+await click('[data-action=newSale]');
+window.matchMedia=()=>({matches:true});
+renderRows();await click('[data-action=editRow]');
+check(editor.open,'Mobile editor did not open');
+const rowForm=editor.querySelector('form');
+rowForm.elements.itemId.value=item;rowForm.elements.itemId.dispatchEvent(new Event('change',{bubbles:true}));
+rowForm.elements.quantity.value='2';rowForm.elements.unit.value='carton';rowForm.elements.unit.dispatchEvent(new Event('change',{bubbles:true}));
+rowForm.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));await wait();
+check(!editor.open&&rows[0].unit==='carton'&&rows[0].quantity==='2','Mobile row not updated');

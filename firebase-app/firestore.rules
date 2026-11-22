@@ -27,6 +27,57 @@ service cloud.firestore {
         p.carton is int && p.carton >= 0 && p.loose is int && p.loose >= 0 &&
         p.tax is number && p.tax >= 0 && p.tax <= 100 && p.cost is number && p.cost >= 0;
     }
+
+    // Rebuild workspace. Existing wholesale/main data remains separate.
+    match /erp/main/{kind}/{id} {
+      function versionBefore() {
+        return exists(/databases/$(database)/documents/erp/main/$(kind)/$(id)) ? resource.data.version : 0;
+      }
+      function posted() {
+        let operation = request.resource.data.operationId;
+        let path = /databases/$(database)/documents/erp/main/operations/$(operation);
+        return operation is string && !exists(path) &&
+          getAfter(path).data.actor == request.auth.uid;
+      }
+      function versioned() {
+        return request.resource.data.id == id &&
+          request.resource.data.version is int &&
+          request.resource.data.version == versionBefore() + 1 &&
+          posted();
+      }
+      function knownKind() {
+        return kind in ['items','parties','orders','documents','movements','visits','closings','settings'];
+      }
+      function validRecord() {
+        let d = request.resource.data;
+        return (kind != 'items' || (d.name is string && d.name.size() > 0 &&
+          d.unit is string && d.packs is list && d.packs.size() <= 5 &&
+          d.stock is int && d.stock >= 0 && d.price is int && d.price >= 0 &&
+          d.cost is number && d.cost >= 0 && d.mrp is int && d.mrp >= 0 &&
+          d.tax is number && d.tax >= 0 && d.tax <= 100)) &&
+          (kind != 'parties' || (d.name is string && d.name.size() > 0 &&
+           d.role in ['Customer','Supplier'] && d.address is string && d.area is string && d.prices is list)) &&
+          (kind != 'documents' || (d.total is int && d.total >= 0 && d.dueDelta is int &&
+           d.type is string && d.date is string && d.actor == request.auth.uid)) &&
+          (kind != 'orders' || (d.lines is list && d.lines.size() > 0 && d.lines.size() <= 50 && d.partyId is string)) &&
+          (kind != 'movements' || (d.quantity is int && d.source is string && d.itemId is string));
+      }
+      allow read: if owner() && (knownKind() || kind in ['operations','control']);
+      allow create: if owner() && knownKind() && versioned() && validRecord();
+      allow update: if owner() && kind in ['items','parties','orders','visits','settings','documents'] &&
+        versioned() && validRecord() &&
+        (kind != 'documents' || request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['delivery','deliveredDate','version','operationId']));
+      allow create: if owner() && kind == 'operations' &&
+        request.resource.data.keys().hasOnly(['actor','date','type','result']) &&
+        request.resource.data.actor == request.auth.uid &&
+        getAfter(/databases/$(database)/documents/erp/main/control/generation).data.operationId == id;
+      allow create, update: if owner() && kind == 'control' && id == 'generation' &&
+        request.resource.data.keys().hasOnly(['value','operationId']) &&
+        request.resource.data.value is int &&
+        request.resource.data.value == (exists(/databases/$(database)/documents/erp/main/control/generation) ? resource.data.value : 0) + 1 &&
+        posted();
+    }
     match /wholesale/main {
       allow read: if owner();
       allow create, update: if owner() && advancing() && validWorkspace();

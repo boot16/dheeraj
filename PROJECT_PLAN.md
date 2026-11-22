@@ -204,3 +204,72 @@ Started dedicated Inventory → Add item → Review → Save → saved details f
 ### Item presentation checkpoint
 
 Implemented Item details → Packing → Prices → Tax details → Review/Save. Packing rows show Pack name, Contains and the preceding unit. Prices show selling unit, MRP and selling price in aligned columns. Unit labels follow the selected unit/pack. Optional outer-pack price is hidden for individual-only items. Existing data fields remain compatible. Syntax and section/field checks passed. Browser rendering and live save remain unverified. Intermediate pack pricing, separate opening stock and all-unit transaction integration remain pending.
+
+## Rebuild specification — 22 November 2026
+
+This section supersedes earlier proposed wizard-style screen flows. The owner rejected the previous interface. Confirmed presentation requirement: simple tables, chronological field order, familiar language. Implementation below is proposed sequencing, not a claim of completion.
+
+### Shared presentation
+
+Document pages use one page: header details, editable item rows, totals/payment, Save and optional Print. Item creation uses details then optional packing rows then Save. Review is inline. Desktop grids support keyboard entry; mobile shows compact rows with a focused row editor. Lists and creation forms are distinct screens. Saved records open a readable detail view.
+
+### Service contracts
+
+| Service | Owns | Produces and changes |
+| --- | --- | --- |
+| Access and shop | Owner authentication, shop identity, invoice settings | Grants access to the single shop; settings supply document snapshots |
+| Items and units | Item identity, name, base unit, packing relationships, MRP, HSN, default tax and unit prices | Reusable product; zero stock on creation; historical conversions preserved on documents |
+| Parties and prices | Customers and suppliers with stable IDs; customer address/area; agreed item/unit rates | Supplies party selection and price defaults; profile edits preserve historical documents |
+| Opening records | Opening physical stock/cost, customer/supplier balances, opening cash | Dated source records and stock/financial postings; tracked corrections |
+| Purchasing | Supplier bill/receipt, paid/free quantities, actual cost, invoice reference/date | Records goods received and payable; links immediate payment; checks duplicate supplier bill |
+| Orders | Requested items, quantities, agreed rates, customer and area snapshot | Pending quantities and shortages; no stock deduction or receivable |
+| Dispatch and delivery | Actual outgoing quantities linked to order lines; delivery status | Posts stock issue once and generates linked invoice in one owner action; partial remainder persists |
+| Sales invoices | Customer invoice, actual rates, tax/discount/rounding, direct-sale option | Receivable and invoice snapshot; direct sale posts stock once through shared posting logic |
+| Payments and allocation | Collections, supplier payments, payment method, linked bill allocations | Cash/bank and outstanding movements; accommodates policy for unallocated money once defined |
+| Customer returns | Goods received back from customer and condition; source sale | Sellable/unsellable movement and linked credit/refund settlement |
+| Supplier returns | Goods sent back and pending/received supplier credit | Stock issue and separately tracked settlement without duplicate payable reduction |
+| Expenses | Date, category, description, amount, payment method, optional area | Cash/bank expense posting and closing/report input |
+| Stock ledger | Append-only movements with item, source, signed base quantity and valuation | Explainable balance; reconciliation; stock adjustment requires reason |
+| Financial posting | Party subledgers, cash/bank entries, source links, reversals | Shared atomic posting rules; operational balances reconciled; full accounting scope remains an open decision |
+| Area planning | Area names derived from profiles; dated visits/tasks | Ready dispatches, pending shortages and collections; task completion references real events |
+| Daily closing | Date/cutoff, opening cash, cash movement, counted cash, difference | Saved daily snapshot and outstanding-work summary; later correction/version policy |
+| Reports | Read-only calculations from source documents and ledgers | Demand/fulfillment, sales/returns, stock, dues, area gross margin/direct expenses with drill-down |
+| Invoice output | Print/PDF template, logo, signature image once confirmed | Consistent printed copy from saved invoice; legal/tax format verification before live use |
+| Data administration | Export, validated import/migration and recovery | Backups, reviewed legacy linking, reconciliation and restore verification |
+
+### Minimal page inventory
+
+- Today: business figures, pending tasks, Close day.
+- Items: list; Add/Edit item; item details and movements.
+- Customers and Suppliers: lists; profiles; linked transactions and ledger.
+- Purchases: list; New purchase table; saved bill.
+- Orders: list/filter by area and pending status; New order table; order detail.
+- Dispatches: outgoing quantities and linked invoice; delivery confirmation.
+- Sales: invoice list; New sale table; saved invoice.
+- Money: collections, supplier payments and expenses.
+- Returns: Customer returns and Supplier returns.
+- Areas: visit plan and area work.
+- Reports: filters and source drill-down.
+- Settings: shop, invoice, export/restore.
+
+Ledger is a view of transactions for a selected party with date, source, debit, credit and running balance. It must not require re-entering a sale or payment.
+
+### Rebuild sequence and safeguards
+
+1. Preserve current source and export shop records before migration. Develop rebuild separately in the same repository.
+2. Implement Items, Units and Parties first with shared validation and legacy readers. Complete item creation, edit/reopen and pricing persistence.
+3. Implement posting and opening records; purchases; direct sale; payments. Verify one complete receipt-to-sale-to-collection cycle.
+4. Add orders, partial dispatch and delivery with original-line tracking.
+5. Add distinct return workflows, expenses and saved closing.
+6. Add area planning, reports and final invoice presentation.
+7. Reconcile sample scenarios, test rules and browser flows, migrate reviewed records and deploy.
+
+Firebase Spark and monolith remain confirmed constraints. Choose document shapes only after checking atomic write/rule limits. Do not claim a screen or module complete based on syntax checks. Record UI, domain, rules, persistence and migration verification separately.
+
+### First deliverable
+
+A working Items list and simple item form with name/unit/MRP/default selling rates/HSN/GST, optional packing table and Save. Prices retain their explicit unit. Save/reopen/edit must persist correctly. Purchases and sales then reuse this same unit model. Extra review pages and abstract packing-level terminology are superseded.
+
+### Decisions still needed at the affected stage
+
+Tax-inclusive/exclusive pricing and rounding; expiry/batch and containers; credit/advance allocation policy; failed delivery/cancelled remainder; return settlement; closing correction; signature type. Do not silently decide these from a UI example.

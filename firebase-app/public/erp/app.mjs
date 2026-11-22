@@ -7,10 +7,11 @@ const escape=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<'
 const money=value=>new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format((value||0)/100);
 const date=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 let state=empty(),page='Today',mode='',selected='',rows=[],packs=[],busy=false,pending=null,area='',reportDate=date();
+let partyRole='Customer';
 const config=await (await fetch('/__/firebase/init.json')).json();
 const app=initializeApp(config),auth=getAuth(app),db=getFirestore(app),root=doc(db,'erp','main');
 const ref=(kind,id)=>doc(collection(root,kind),id);
-const pages=['Today','Items','Parties','Purchases','Sales','Orders','Money','Returns','Areas','Reports','Settings'];
+const pages=['Today','Items','Parties','Purchases','Sales','Orders','Money','Returns','Areas','Reports','Settings','More'];
 const find=(kind,id)=>state[kind].find(row=>row.id===id);
 const field=(label,name,value='',type='text',extra='')=>'<label>'+label+'<input name="'+name+'" type="'+type+'" value="'+escape(value)+'" '+extra+'></label>';
 const amount=(label,name,value=0)=>field(label,name,(value/100).toFixed(2),'number','min="0" max="1000000000" step=".01" required');
@@ -87,22 +88,40 @@ function listDocs(types){
 }
 function docTable(docs){
   return table(['Date','Reference','Party / description','Type','Amount','Outstanding',''],docs.map(doc=>[
-    escape(doc.date),escape(doc.reference||doc.code||doc.id.slice(0,8)),escape(doc.partyName),escape(doc.type),money(doc.total),
+    escape(doc.date),escape(doc.reference||doc.code||doc.id.slice(0,8)),escape(doc.partyName),escape(typeName(doc.type)),money(doc.total),
     ['sale','purchase','openingDue'].includes(doc.type)?money(billBalance(state,doc.id)):'—',button('Open','document',doc.id)
   ]));
 }
+const pageNames={Today:'Today',Orders:'Orders',Items:'Stock & items',Parties:'Customers & suppliers',More:'More'};
+const typeName=type=>({sale:'Sale bill',purchase:'Purchase bill',receipt:'Customer collection',payment:'Supplier payment',expense:'Expense',openingDue:'Opening balance',openingStock:'Opening stock',customerReturn:'Customer return',supplierReturn:'Supplier return'}[type]||type);
 function render(){
-  document.querySelector('#nav').innerHTML=pages.map(name=>'<button data-page="'+name+'" class="'+(page===name?'active':'')+'">'+name+'</button>').join('');
-  let html='<div class="row between"><h1>'+escape(page)+'</h1><div class="row no-print">'+button('Refresh','refresh')+button('Export backup','export')+'</div></div>';
+  const mainPages=['Today','Orders','Items','Parties','More'];
+  const active=mainPages.includes(page)?page:'More';
+  document.querySelector('#nav').innerHTML=mainPages.map(name=>'<button data-page="'+name+'" class="'+(active===name?'active':'')+'"'+(active===name?' aria-current="page"':'')+'>'+escape(pageNames[name])+'</button>').join('');
+  let html='<div class="row between page-heading"><h1>'+escape(pageNames[page]||page)+'</h1><div class="row no-print">'+button('Refresh','refresh')+'</div></div>';
+  if(page==='More'){
+    const links=[['Purchases','Stock received','Enter supplier bills and view purchases.'],['Sales','Sale bills','Create, open and print customer bills.'],['Money','Collections & expenses','Record money received, payments and shop costs.'],['Returns','Returns','Customer returns and goods sent back to suppliers.'],['Areas','Area visits','Plan visits, pending deliveries and collections.'],['Reports','Daily reports','Review sales, stock margins and saved closings.'],['Settings','Shop settings','Business details, invoice images and backup.']];
+    html+='<div class="menu-grid">'+links.map(([target,title,description])=>'<button class="menu-tile" data-page="'+target+'"><strong>'+title+'</strong><span>'+description+'</span></button>').join('')+'</div>';
+  }
   if(mode==='document'){view.innerHTML=html+documentView(find('documents',selected));setBusy();return}
   if(page==='Today'){
+    const hasSupplier=state.parties.some(row=>row.role==='Supplier'),hasCustomer=state.parties.some(row=>row.role==='Customer');
+    if(!state.items.length||!hasSupplier||!hasCustomer||!state.movements.length){
+      html+='<section class="setup panel"><h2>Set up your shop</h2><p>Start with one real item and the people you buy from and sell to.</p><ol>'+
+        [[state.items.length>0,'Add an item','Enter its name, packing and prices.','newItem'],
+         [hasSupplier,'Add a supplier','Who delivers stock to your shop?','newSupplier'],
+         [hasCustomer,'Add a customer','Which shop do you supply?','newCustomer'],
+         [state.movements.length>0,'Enter your stock','Record a supplier delivery or opening stock.','newPurchase']].map(([done,title,description,action])=>
+          '<li><div><strong>'+title+'</strong><small>'+description+'</small></div>'+button(done?'Add another':title,action)+'</li>').join('')+'</ol></section>';
+    }
+
     const report=dayReport(state,date()),pendingOrders=state.orders.filter(order=>orderRemaining(order).some(row=>row.remaining>0));
-    html+='<div class="row">'+button('New sale','newSale','',true)+button('Receive stock','newPurchase')+button('Take order','newOrder')+button('Close day','close')+'</div><div class="metrics">'+
+    html+='<div class="daily-actions">'+button('New sale','newSale','',true)+button('Receive stock','newPurchase')+button('Take order','newOrder')+'</div><div class="metrics">'+
       [['Sales today',report.sales],['Received today',report.methods.reduce((n,row)=>n+row.received,0)],['Expenses today',report.expenses],
        ['Customers owe',state.parties.filter(p=>p.role==='Customer').reduce((n,p)=>n+outstanding(state,p.id),0)]].map(([label,value])=>'<div class="metric">'+label+'<strong>'+money(value)+'</strong></div>').join('')+'</div>'+
       '<section class="panel"><h2>Orders still to send · '+pendingOrders.length+'</h2>'+table(['Party','Area','Pending',''],pendingOrders.map(order=>[escape(order.partyName),escape(order.area),orderRemaining(order).filter(line=>line.remaining).map(line=>escape(line.name)+' · '+line.remaining+' '+escape(find('items',line.itemId)?.unit||'units')).join('<br>'),button('Open order','order',order.id)]))+'</section>'+
       '<section class="panel"><h2>Deliveries in progress</h2>'+docTable(state.documents.filter(doc=>doc.delivery==='Out for delivery'))+'</section>'+
-      '<section class="panel"><h2>Today’s money</h2>'+table(['Method','Received','Paid out'],report.methods.map(row=>[row.method,money(row.received),money(row.paid)]))+'</section>';
+      '<details class="panel"><summary>Cash, UPI and bank totals</summary>'+table(['Method','Received','Paid out'],report.methods.map(row=>[row.method,money(row.received),money(row.paid)]))+'</details><section class="panel close-day"><div><h2>Finish the day</h2><p>Check drawer cash and save today’s report.</p></div>'+button('Close day','close','',true)+'</section>';
     if(mode==='closing')html+=closingForm();
   }
   if(page==='Items'){
@@ -151,7 +170,49 @@ function render(){
   if(mode==='bill'){restoreDraft();renderRows()}
   if(mode==='item'){renderPacks();updatePackLabels()}
   if(mode==='order')renderDispatch();
+  if(page==='Money')updateMoneyForm();
+  if(page==='Returns')updateReturnForm();
+  if(mode==='party')updatePartyForm();
   setBusy();
+}
+function updatePartyForm(){
+ const form=view.querySelector('[data-form=party]');
+ if(!form)return;
+ const customer=form.elements.role.value==='Customer';
+ form.elements.area.closest('label').hidden=!customer;
+ form.elements.area.required=customer;
+}
+function updateMoneyForm(){
+ const form=view.querySelector('[data-form=money]');
+ if(!form)return;
+ const kind=form.elements.type.value,expense=kind==='expense';
+ for(const name of ['description','category','area']){
+   form.elements[name].closest('label').hidden=!expense;
+   form.elements[name].required=expense&&name!=='area';
+ }
+ form.elements.partyId.closest('label').hidden=expense;
+ form.elements.partyId.required=!expense;
+ const role=kind==='receipt'?'Customer':kind==='payment'?'Supplier':null;
+ const previous=form.elements.partyId.value;
+ form.elements.partyId.innerHTML=options('parties',role).map(([id,label])=>'<option value="'+escape(id)+'">'+escape(label)+'</option>').join('');
+ if([...form.elements.partyId.options].some(option=>option.value===previous))form.elements.partyId.value=previous;
+ form.elements.method.closest('label').hidden=kind==='openingDue';
+ form.elements.amount.min='.01';
+}
+function updateReturnForm(){
+ const form=view.querySelector('[data-form=return]');
+ if(!form)return;
+ const customer=form.elements.type.value==='customerReturn',previous=form.elements.sourceId.value;
+ form.elements.sourceId.innerHTML=[['','Select original '+(customer?'sale':'purchase')+' bill'],...listDocs([customer?'sale':'purchase']).map(doc=>[doc.id,doc.partyName+' · '+doc.date+' · '+money(doc.total)])]
+   .map(([id,label])=>'<option value="'+escape(id)+'">'+escape(label)+'</option>').join('');
+ if([...form.elements.sourceId.options].some(option=>option.value===previous))form.elements.sourceId.value=previous;
+ form.elements.condition.closest('label').hidden=!customer;
+ form.elements.method.closest('label').hidden=form.elements.settlement.value!=='Refund';
+ const bill=find('documents',form.elements.sourceId.value),selectedLine=form.elements.lineId.value;
+ form.elements.lineId.innerHTML=(bill?.lines||[]).map(line=>'<option value="'+line.id+'">'+escape(line.name)+' · '+escape(line.unit)+'</option>').join('');
+ if([...form.elements.lineId.options].some(option=>option.value===selectedLine))form.elements.lineId.value=selectedLine;
+ form.elements.sourceId.required=true;
+ form.elements.lineId.required=true;
 }
 function itemForm(){
   const item=find('items',selected);
@@ -188,7 +249,7 @@ function partyForm(){
   const party=find('parties',selected);
   const areas=[...new Set(state.parties.map(row=>row.area).filter(Boolean))];
   return '<form data-form="party"><h2>'+(party?'Edit profile':'Add customer or supplier')+'</h2><div class="fields">'+
-    pick('Type','role',[['Customer','Customer'],['Supplier','Supplier']],party?.role||'Customer')+field('Name','name',party?.name||'','text','required')+
+    pick('Type','role',[['Customer','Customer'],['Supplier','Supplier']],party?.role||partyRole)+field('Name','name',party?.name||'','text','required')+
     field('Delivery / business address','address',party?.address||'','text','required')+field('Area (customers)','area',party?.area||'','text','list="area-names"')+
     field('Mobile','mobile',party?.mobile||'','tel')+field('GSTIN (optional)','gstin',party?.gstin||'')+'</div><datalist id="area-names">'+areas.map(name=>'<option value="'+escape(name)+'">').join('')+'</datalist>'+formEnd('Save profile');
 }
@@ -226,7 +287,7 @@ function billForm(){
     '<div id="bill-rows"></div>'+button('Add item row','addRow')+'<div class="totals" id="totals"></div>'+
     (order?'':'<div class="fields">'+pick(purchase?'Payment to supplier':'Customer payment','settlement',[['credit','On credit'],['full','Paid in full'],['partial','Part paid']],draft.settlement||'credit')+
       amount('Part payment ₹','paid',cash(draft.paid||0))+methods()+'</div>')+
-    '<p class="muted">Rates entered here are before GST. Invoice format is for testing until the shop’s GST settings are confirmed.</p>'+formEnd(order?'Save order':purchase?'Save purchase':'Save sale');
+    '<p class="muted">Enter the rate for the selected unit, before GST.</p>'+formEnd(order?'Save order':purchase?'Save purchase':'Save sale');
 }
 function rowFields(row,index){
   const item=find('items',row.itemId),units=item?unitList(item):[];
@@ -369,7 +430,7 @@ document.addEventListener('click',async event=>{
     if(action==='refresh'){if(mode&&!confirm('Refresh and discard this form?'))return;pending=null;await reload();mode='';render();status('Records refreshed.')}
     if(action==='newItem'||action==='editItem'){page='Items';mode='item';selected=action==='editItem'?id:'';packs=structuredClone(find('items',selected)?.packs||[]);render()}
     if(action==='stock'||action==='movements'){page='Items';mode=action;selected=id;render()}
-    if(action==='newParty'||action==='editParty'){page='Parties';mode='party';selected=action==='editParty'?id:'';render()}
+    if(['newParty','editParty','newSupplier','newCustomer'].includes(action)){page='Parties';mode='party';selected=action==='editParty'?id:'';partyRole=action==='newSupplier'?'Supplier':'Customer';render()}
     if(action==='ledger'||action==='price'){page='Parties';mode=action;selected=id;render()}
     if(action==='pack'){
       const form=view.querySelector('[data-form=item]');
@@ -379,6 +440,10 @@ document.addEventListener('click',async event=>{
     }
     if(action==='removePack'){packs.splice(Number(id));renderPacks()}
     if(['newSale','newPurchase','newOrder'].includes(action)){
+      const role=action==='newPurchase'?'Supplier':'Customer';
+      if(!state.items.length){page='Items';mode='item';selected='';packs=[];render();status('Add your first item. Then return to '+(action==='newPurchase'?'Receive stock':action==='newOrder'?'Take order':'New sale')+'.');return}
+      if(!state.parties.some(row=>row.role===role)){page='Parties';mode='party';selected='';partyRole=role;render();status('Add a '+role.toLowerCase()+' to continue.');return}
+
       billType=action==='newSale'?'sale':action==='newPurchase'?'purchase':'order';
       page=billType==='sale'?'Sales':billType==='purchase'?'Purchases':'Orders';
       mode='bill';selected='';draft={};rows=[{itemId:'',quantity:1,unit:'',rate:0,discount:0,free:0}];render();
@@ -431,6 +496,9 @@ document.addEventListener('change',event=>{
     rememberDraft();setDefaultRate(row);renderRows();
   }
   const form=target.closest('form');
+  if(form?.dataset.form==='money'&&target.name==='type')updateMoneyForm();
+  if(form?.dataset.form==='party'&&target.name==='role')updatePartyForm();
+  if(form?.dataset.form==='return'&&['type','sourceId','settlement'].includes(target.name))updateReturnForm();
   if(target.dataset.dispatchUnit!==undefined){
     const line=find('orders',selected).lines.find(row=>row.id===target.dataset.dispatchUnit);
     const unit=unitList(find('items',line.itemId)).find(row=>row.name===target.value);

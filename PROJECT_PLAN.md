@@ -313,3 +313,19 @@ Full accounting/general ledger, corrections and linked reversals, advances, orde
 Reads currently load the rebuild workspace, and writes conservatively check loaded record versions plus a shared generation. This is safe against stale screens in tested workflows but needs scoped query/pagination work as records grow. Rules enforce ownership, operation linkage, basic shape, nonnegative stock and immutable financial documents; the owner's browser still executes the detailed posting arithmetic on Spark.
 
 See firebase-app/public/erp/README.md for exact deployment and repeatable checks. This checkpoint records a connected test release, not production accounting approval.
+
+## Minimal owner experience — 22 November 2026
+
+The owner asked for an easy, minimal ERP and does not want to choose implementation details. Continue the existing Firebase application for this iteration. The ERPNext document remains a candidate assessment, not an approved platform migration.
+
+Implemented navigation and guidance:
+- Five main destinations: Today, Orders, Stock & items, Customers & suppliers, More.
+- First-use setup checklist: one item, supplier, customer and initial stock.
+- Today emphasizes New sale, Receive stock, Take order, pending goods and deliveries. Cash-method details are expandable; closing has a dedicated action.
+- More groups existing purchase/sale history, money, returns, visits, reports and settings with plain descriptions.
+- Money forms hide unrelated expense/party fields and filter parties to the correct role.
+- Return forms filter source bills by return direction; supplier returns hide customer goods-condition fields.
+- Missing item/party prerequisites lead to the appropriate form with a clear explanation.
+- Mobile navigation stays at the bottom. Existing business records, packing conversions and posting logic are reused.
+
+Verification: all seven domain tests and DOM interaction tests passed, including five-tab navigation, first-use setup and conditional money/return fields. Browser visual checks, actual iPhone Safari and live Firebase deployment remain unverified. Previous backend and report limitations remain listed in the integrated rebuild checkpoint.

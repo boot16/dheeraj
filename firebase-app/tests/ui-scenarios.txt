@@ -9,6 +9,8 @@ const click=async(selector)=>{const target=document.querySelector(selector);chec
 const fill=(name,value,form=view.querySelector('form'))=>{check(form.elements[name],'Missing field '+name);form.elements[name].value=value};
 const submit=async()=>{view.querySelector('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));await wait()};
 render();
+check(view.textContent.includes('Set up your shop'),'New shop setup missing');
+check(document.querySelectorAll('#nav [data-page]').length===5,'Navigation should have five destinations');
 await click('[data-page=Items]');
 await click('[data-action=newItem]');
 fill('name','Cola');fill('unit','bottle');fill('mrp','20');fill('price','18');fill('tax','5');
@@ -24,6 +26,7 @@ fill('name','Supplier');fill('role','Supplier');fill('address','Road');await sub
 await click('[data-action=newParty]');
 fill('name','Retailer');fill('role','Customer');fill('address','Street');fill('area','West');await submit();
 const supplier=state.parties.find(p=>p.role==='Supplier').id,customer=state.parties.find(p=>p.role==='Customer').id,item=state.items[0].id;
+await click('[data-page=More]');
 await click('[data-page=Purchases]');
 await click('[data-action=newPurchase]');
 fill('partyId',supplier);fill('reference','P1');
@@ -54,6 +57,7 @@ check(state.documents.find(d=>d.type==='sale').delivery==='Delivered','Delivery 
 await click('[data-action=ledger]');
 fill('amount','2940');await submit();
 check(outstanding(state,customer)===0,'Collection failed');
+await click('[data-page=More]');
 await click('[data-page=Sales]');
 await click('[data-action=newSale]');
 window.matchMedia=()=>({matches:true});
@@ -64,3 +68,23 @@ rowForm.elements.itemId.value=item;rowForm.elements.itemId.dispatchEvent(new Eve
 rowForm.elements.quantity.value='2';rowForm.elements.unit.value='carton';rowForm.elements.unit.dispatchEvent(new Event('change',{bubbles:true}));
 rowForm.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));await wait();
 check(!editor.open&&rows[0].unit==='carton'&&rows[0].quantity==='2','Mobile row not updated');
+
+await click('[data-action=closeEditor]');
+await click('[data-page=More]');
+await click('[data-page=Money]');
+let moneyForm=view.querySelector('form');
+check(moneyForm.elements.description.closest('label').hidden,'Collection should hide expense fields');
+check([...moneyForm.elements.partyId.options].some(option=>option.value===customer),'Customer missing from collection');
+check(![...moneyForm.elements.partyId.options].some(option=>option.value===supplier),'Supplier should not be selectable for customer collection');
+moneyForm.elements.type.value='expense';
+moneyForm.elements.type.dispatchEvent(new Event('change',{bubbles:true}));
+check(moneyForm.elements.partyId.closest('label').hidden,'Expense should hide party');
+check(!moneyForm.elements.description.closest('label').hidden,'Expense description missing');
+await click('[data-page=More]');
+await click('[data-page=Returns]');
+const returnForm=view.querySelector('form');
+check([...returnForm.elements.sourceId.options].filter(option=>option.value).length===1,'Customer return should show sales only');
+returnForm.elements.type.value='supplierReturn';
+returnForm.elements.type.dispatchEvent(new Event('change',{bubbles:true}));
+check(returnForm.elements.condition.closest('label').hidden,'Supplier return should hide customer condition');
+check([...returnForm.elements.sourceId.options].filter(option=>option.value).length===1,'Supplier return should show purchases only');
